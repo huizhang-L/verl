@@ -1,0 +1,4 @@
+# python3 lhj_scripts/command_volc_resume.py --priority 6 --max_num_workers 1 --retry 0 --keep_tmp_file --task_cfg_path /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/test/jobs_yaml/config_0.yaml
+# python3 lhj_scripts/command_volc_resume.py --preemptible --priority 6 --max_num_workers 1 --retry 0 --keep_tmp_file --task_cfg_path /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/test/jobs_yaml/config_0.yaml
+# python3 lhj_scripts/command_volc_resume.py --priority 6 --max_num_workers 1 --retry 0 --keep_tmp_file --task_cfg_path /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/test/jobs_yaml/config_1.yaml
+python3 lhj_scripts/command_volc_resume.py --preemptible --priority 6 --max_num_workers 1 --retry 0 --keep_tmp_file --task_cfg_path /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/test/jobs_yaml/config_1.yaml

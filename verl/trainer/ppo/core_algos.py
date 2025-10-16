@@ -22,7 +22,8 @@ __all__ = ["register_adv_est", "get_adv_estimator_fn", "AdvantageEstimator"]
 
 from collections import defaultdict
 from enum import Enum
-from typing import Optional
+from typing import Optional, Tuple, Union, List
+import math
 
 import numpy as np
 import torch
@@ -119,6 +120,7 @@ class AdvantageEstimator(str, Enum):
 
     GAE = "gae"
     GRPO = "grpo"
+    PROCESS_GRPO = "process_grpo"
     REINFORCE_PLUS_PLUS = "reinforce_plus_plus"
     REINFORCE_PLUS_PLUS_BASELINE = "reinforce_plus_plus_baseline"
     REMAX = "remax"
@@ -307,6 +309,147 @@ def compute_grpo_outcome_advantage(
 
     return scores, scores
 
+
+@register_adv_est(AdvantageEstimator.PROCESS_GRPO)
+def compute_process_grpo_advantage(
+    token_level_rewards: torch.Tensor,            # [bs, T]
+    response_mask: torch.Tensor,                  # [bs, T] (1:valid, 0:invalid)
+    index: np.ndarray,                            # [bs]  分组ID（同一prompt一组）
+    *,
+    step_ids: Union[torch.Tensor, np.ndarray],    # [bs, T] 0=padding, 1..K为step编号
+    step_critique: Optional[np.ndarray] = None,
+    prior_response_mask: Optional[Union[torch.Tensor, np.ndarray]], # len=bs; 每项: List[bool/int] 1正确/0错误；None=全True
+    coef_bad_step_if_adv_pos: float = 1.0,        # A_i>0 时，错误step乘此系数（可为负以反转）
+    coef_good_step_if_adv_neg: float = 1.0,       # A_i<0 时，正确step乘此系数（可为负以反转）
+    top_n: Union[int, float] = 0,                 # >1: 前N个；0<top_n<1: 前百分比；<=0: 不启用
+    topn_mode: str = "truncate",                  # "scale" | "truncate"
+    topn_scale: float = 1.0,                      # topn_mode="scale"时放大倍数
+    epsilon: float = 1e-6,
+    norm_adv_by_std_in_grpo: bool = True,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    基于 GRPO outcome 的标量优势，按 step 对 token 优势做细粒度调整（符号依赖 + top-n 两方案）。
+    - step 划分来自 `step_ids`（0为padding，1..K为step编号）。
+    - top_n:
+        * 0 < top_n < 1  -> 取每个 step 的前 ceil(top_n * step_len) 个 token
+        * top_n >= 1     -> 取每个 step 的前 int(top_n) 个 token
+        * top_n <= 0     -> 不启用 top-n
+    - topn_mode:
+        * "truncate": 保留前 keep_n，其余置 0
+        * "scale"   : 仅放大前 keep_n（乘 topn_scale），其余不变
+    """
+    if not isinstance(step_ids, torch.Tensor):
+        step_ids = torch.as_tensor(step_ids)
+
+    bs, T = response_mask.shape
+    if step_ids.shape != (bs, T):
+        raise ValueError(f"step_ids 形状应为 ({bs}, {T})，当前为 {tuple(step_ids.shape)}")
+    if topn_mode not in ("scale", "truncate"):
+        raise ValueError(f"topn_mode 必须为 'scale' 或 'truncate'，当前为 {topn_mode!r}。")
+
+    device = token_level_rewards.device
+    step_ids = step_ids.to(device=device, dtype=torch.long)
+    response_mask = response_mask.to(device=device)
+    token_level_rewards = token_level_rewards.to(device=device)
+
+    if prior_response_mask is not None:
+        # 仅在 prior_response_mask==1 且 response_mask==1 的 token 上参与计算
+        combined_mask = (response_mask > 0) & (prior_response_mask > 0)  # bool [bs, T]
+        combined_mask_f = combined_mask.to(token_level_rewards.dtype)
+    else:
+        combined_mask = (response_mask > 0)  # bool [bs, T]
+        combined_mask_f = combined_mask.to(token_level_rewards.dtype)
+    # 1) 每样本 outcome 分数（只累计 combined_mask 的 token）
+    scores = (token_level_rewards * combined_mask_f).sum(dim=-1)  # [bs]
+
+    # 2) 组内均值/方差并归一化成标量优势 A_i
+    with torch.no_grad():
+        id2score = defaultdict(list)
+        for i in range(bs):
+            id2score[index[i]].append(scores[i])
+
+        id2mean, id2std = {}, {}
+        for g, vals in id2score.items():
+            if len(vals) <= 1:
+                id2mean[g] = torch.tensor(0.0, device=device)
+                id2std[g]  = torch.tensor(1.0, device=device)
+            else:
+                v = torch.stack(vals).to(device)
+                id2mean[g] = v.mean()
+                id2std[g]  = v.std(unbiased=False)
+
+        for i in range(bs):
+            m, s = id2mean[index[i]], id2std[index[i]]
+            scores[i] = (scores[i] - m) / (s + epsilon) if norm_adv_by_std_in_grpo else (scores[i] - m)
+
+    # 3) 准备 step 正误列表
+    def _crit_list_for_sample(i: int, n_steps: int) -> List[bool]:
+        if step_critique is None:
+            return [True] * n_steps
+        raw = step_critique[i]
+        cl = [bool(x) for x in (list(raw) if isinstance(raw, (list, tuple, np.ndarray)) else [raw])]
+        if len(cl) < n_steps:
+            cl = cl + [True] * (n_steps - len(cl))
+        else:
+            cl = cl[:n_steps]
+        return cl
+
+    # 计算每步要保留的前N个token数量（支持 int & float）
+    def _compute_keep_n(n_tokens: int) -> int:
+        if top_n is None or float(top_n) <= 0:
+            return 0
+        tn = float(top_n)
+        if 0.0 < tn < 1.0:
+            return max(1, int(math.ceil(tn * n_tokens))) if n_tokens > 0 else 0
+        else:
+            return min(int(tn), n_tokens)
+
+    # 有效长度（到EOS为止）
+    eff_len = (response_mask > 0).sum(dim=-1).tolist()
+
+    # 4) token 权重矩阵
+    weights = torch.ones((bs, T), device=device, dtype=torch.float32)
+
+    for i in range(bs):
+        Ti = int(eff_len[i])
+        if Ti <= 0:
+            continue
+
+        max_step_i = int(step_ids[i, :Ti].max().item())
+        if max_step_i <= 0:
+            continue
+
+        crit = _crit_list_for_sample(i, max_step_i)
+        Ai = float(scores[i].item())
+        
+        for s_id in range(1, max_step_i + 1):
+            tok_idx = (step_ids[i, :Ti] == s_id).nonzero(as_tuple=False).flatten()
+            if tok_idx.numel() == 0:
+                continue
+
+            # 符号依赖的系数
+            is_correct = bool(crit[s_id - 1])
+            if Ai > 0 and not is_correct:
+                weights[i, tok_idx] *= coef_bad_step_if_adv_pos
+            elif Ai < 0 and is_correct:
+                weights[i, tok_idx] *= coef_good_step_if_adv_neg
+
+            # top-n（支持整数或比例）
+            if float(top_n) > 0.0:
+                keep_n = _compute_keep_n(tok_idx.numel())
+                if keep_n > 0:
+                    keep = tok_idx[:keep_n]
+                    if topn_mode == "truncate":
+                        if keep_n < tok_idx.numel():
+                            drop = tok_idx[keep_n:]
+                            weights[i, drop] *= 0.0
+                    else:  # "scale"
+                        if topn_scale != 1.0:
+                            weights[i, keep] *= topn_scale
+
+    advantages = scores.unsqueeze(-1) * weights * response_mask
+    returns    = advantages  # outcome-only
+    return advantages, returns
 
 @register_adv_est(AdvantageEstimator.GRPO_PASSK)  # or simply: @register_adv_est("grpo_passk")
 def compute_grpo_passk_outcome_advantage(

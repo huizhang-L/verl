@@ -1,4 +1,4 @@
-working_dir: ./
+working_dir: "/mnt/shared-storage-user/lvhuijie/my_git_repo/verl"
 excludes: ["/.git/"]
 env_vars:
   TORCH_NCCL_AVOID_RECORD_STREAMS: "1"

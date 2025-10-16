@@ -85,6 +85,26 @@ except ImportError:
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
 
+# 这个组合表示 "assistant\n"
+ASSISTANT_MARKER = [151645, 198, 151644, 77091, 198]
+
+def _count_tokens_after_marker(ids, marker=ASSISTANT_MARKER) -> int:
+    """返回 ids 中第一次出现 marker 之后剩余 token 的数量。
+    要求：marker 在每条 ids 中只出现一次；若未找到则抛错（也可改成返回 len(ids)）。"""
+    # 兼容 torch.Tensor / numpy.ndarray / list
+    if hasattr(ids, "tolist"):
+        ids = ids.tolist()
+
+    n, m = len(ids), len(marker)
+    if m == 0:
+        return n  # 空标记，视为不截
+
+    # 朴素子序列搜索（已足够；一次出现+长度不大）
+    for i in range(n - m + 1):
+        if ids[i:i + m] == marker:
+            return n - (i + m)
+    raise ValueError("assistant marker not found in ids")
+
 
 # patch to avoid issue https://github.com/sgl-project/sglang/issues/6723
 def _set_envs_and_config(server_args: ServerArgs):
@@ -221,6 +241,112 @@ def _post_process_outputs(processing_class, output):
     batched_output_token_ids = pad_sequence(batched_output_token_ids, batch_first=True, padding_value=pad_token_id)
     if len(batched_logprobs) > 0:
         batched_logprobs = pad_sequence(batched_logprobs, batch_first=True, padding_value=pad_token_id)
+    return batched_output_token_ids, batched_logprobs
+
+
+def _post_process_outputs_with_reflection(processing_class, output, idx_list, assistant_marker=ASSISTANT_MARKER):
+    """
+    与 `_post_process_outputs` 基本一致，但会把每条样本里
+    “ASSISTANT_MARKER 之后的旧 token（来自 idx_list）” 与 “新生成 token（output）” 进行拼接，
+    然后再进行批量 pad 并返回。
+
+    Args:
+        processing_class: tokenizer 或带 .tokenizer 的 processor
+        output: 来自引擎的原始输出（与原函数相同的结构）
+        idx_list: list[list[int]] / np.object array / 1D tensors，原始 prompt 的 token 序列（ragged）
+                  ——这里只取其中第一个出现的 ASSISTANT_MARKER 之后的部分作为前缀
+        assistant_marker: 标记序列（默认：[151645, 198, 151644, 77091, 198]）
+
+    Returns:
+        (batched_output_token_ids, batched_logprobs)
+        - batched_output_token_ids: LongTensor [B, L] （prefix_after_marker + generated）
+        - batched_logprobs:        Tensor    [B, L] （prefix 部分填 0，与原逻辑一致用 pad 后再返回）
+    """
+    # 取得 tokenizer
+    try:
+        tokenizer = processing_class.tokenizer  # processor
+    except AttributeError:
+        try:
+            tokenizer = processing_class       # 已是 tokenizer
+        except AttributeError as e:
+            raise ValueError(f"Cannot get tokenizer from processing_class {processing_class}") from e
+
+    # 小工具：在 Python list 中找到第一次出现 marker 之后的子序列
+    def _slice_after_marker_pylist(seq, marker):
+        n, m = len(seq), len(marker)
+        if m == 0:
+            return seq[:]
+        # 朴素一次匹配（marker 在每条样本最多出现一次）
+        for i in range(n - m + 1):
+            if seq[i:i+m] == marker:
+                return seq[i+m:]
+        # 若未找到，按稳妥策略返回空前缀（也可改为抛错）
+        return []
+
+    # 统一把 idx_list 转成 Python list[list[int]]
+    if isinstance(idx_list, np.ndarray) and idx_list.dtype == object:
+        idx_list_py = [list(x) for x in idx_list.tolist()]
+    elif isinstance(idx_list, np.ndarray):
+        idx_list_py = [list(row.tolist()) for row in idx_list]
+    elif torch.is_tensor(idx_list):
+        if idx_list.dim() == 2:
+            idx_list_py = [row.tolist() for row in idx_list]
+        else:
+            idx_list_py = [idx_list.tolist()]
+    else:
+        # 认为是已经是 list[list[int]]
+        idx_list_py = [list(x) if not torch.is_tensor(x) else x.tolist() for x in idx_list]
+
+    # 抽取每条样本 marker 之后的旧 token 前缀（Python list）
+    prefixes_after_marker = [_slice_after_marker_pylist(seq, assistant_marker) for seq in idx_list_py]
+
+    # 原始 map：把引擎输出拆成 (generated_ids, log_probs)
+    def _map_each_response(resp):
+        output_token_logprobs = resp["meta_info"]["output_token_logprobs"]
+        log_probs, output_token_ids = zip(
+            *[(log_prob, token_ids) for log_prob, token_ids, _ in output_token_logprobs], strict=True
+        )
+        # 默认 CPU，保持与原版一致；后续调用方会 .to(device)
+        return torch.tensor(output_token_ids, dtype=torch.long), torch.tensor(log_probs)
+
+    out_pairs = list(map(lambda x: _map_each_response(x), output))
+
+    if len(out_pairs) != len(prefixes_after_marker):
+        raise ValueError(
+            f"Length mismatch: outputs={len(out_pairs)} vs idx_list={len(prefixes_after_marker)}"
+        )
+
+    # 逐样本把 prefix_after_marker 与生成段拼起来
+    batched_output_token_ids = []
+    batched_logprobs = []
+    for (gen_ids, gen_logp), prefix_py in zip(out_pairs, prefixes_after_marker):
+        # prefix -> tensor（与 gen_ids dtype 对齐为 long）
+        if len(prefix_py) > 0:
+            prefix_ids = torch.tensor(prefix_py, dtype=torch.long)
+            # prefix 的 logprob 用 0.0 填充（与后续 pad 逻辑一致）
+            prefix_lp = torch.zeros((len(prefix_py),), dtype=gen_logp.dtype)
+        else:
+            prefix_ids = torch.empty((0,), dtype=torch.long)
+            prefix_lp  = torch.empty((0,), dtype=gen_logp.dtype)
+
+        # 拼接
+        merged_ids = torch.cat([prefix_ids, gen_ids], dim=0)  # [prefix_len + gen_len]
+        merged_lp  = torch.cat([prefix_lp,  gen_logp], dim=0) # 同长
+
+        batched_output_token_ids.append(merged_ids)
+        batched_logprobs.append(merged_lp)
+
+    # 与原函数保持一致的 pad 行为
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    batched_output_token_ids = pad_sequence(
+        batched_output_token_ids, batch_first=True, padding_value=pad_token_id
+    )
+    if len(batched_logprobs) > 0:
+        # 原实现用 pad_token_id 作为 padding_value（会被转换成 float）
+        batched_logprobs = pad_sequence(
+            batched_logprobs, batch_first=True, padding_value=pad_token_id
+        )
+
     return batched_output_token_ids, batched_logprobs
 
 
@@ -732,6 +858,256 @@ class SGLangRollout(BaseRollout):
             force_cpu_device=False,
         )
         out = _post_process_outputs(self.processing_class, output)
+
+        response = out[0].to(idx.device)
+        rollout_log_probs = None
+        if self.config.calculate_log_probs:
+            rollout_log_probs = out[1].to(idx.device)
+
+        if response.shape[1] < self.config.response_length:
+            response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
+            if self.config.calculate_log_probs:
+                rollout_log_probs = pad_sequence_to_length(
+                    rollout_log_probs, self.config.response_length, self.pad_token_id
+                )
+
+        seq = torch.cat([idx, response], dim=-1)
+
+        response_length = response.size(1)
+        delta_position_id = torch.arange(1, response_length + 1, device=position_ids.device)
+        delta_position_id = delta_position_id.unsqueeze(0).repeat(batch_size, 1)
+        if position_ids.dim() == 3:  # qwen2vl mrope
+            delta_position_id = delta_position_id.view(batch_size, 1, -1).expand(batch_size, 3, -1)
+
+        # TODO(sgm): fix position_ids on right_pad
+        # prompt: left pad + response: right pad
+        # attention_mask: [0,0,0,0,1,1,1,1, | 1,1,1,0,0,0,0,0]
+        # position_ids:   [0,0,0,0,0,1,2,3, | 4,5,6,7,8,9,10,11]
+        response_position_ids = position_ids[..., -1:] + delta_position_id
+        position_ids = torch.cat([position_ids, response_position_ids], dim=-1)
+        response_attention_mask = get_response_mask(
+            response_id=response, eos_token=eos_token_id, dtype=attention_mask.dtype
+        )
+        attention_mask = torch.cat((attention_mask, response_attention_mask), dim=-1)
+
+        # all the tp ranks should contain the same data here. data in all ranks are valid
+        batch = TensorDict(
+            {
+                "prompts": idx,
+                "responses": response,
+                "input_ids": seq,  # here input_ids become the whole sentences
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+            },
+            batch_size=batch_size,
+        )
+        if self.config.calculate_log_probs:
+            # we will recompute old log prob with actor
+            batch["rollout_log_probs"] = rollout_log_probs
+
+        # free cache engine
+        if self._engine is not None and self._tp_rank == 0:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(self._engine.flush_cache())
+
+        return DataProto(batch=batch, non_tensor_batch=non_tensor_batch)
+
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
+    @torch.no_grad()
+    def generate_sequences_with_reflection(self, prompts: DataProto, **kwargs) -> DataProto:
+        """Generate sequences for a batch of prompts.
+
+        Args:
+            batch (DataProto): Input batch.
+
+        Returns:
+            DataProto: Output batch.
+            - prompts: [bsz, prompt_length], prompt token ids from dataset.
+            - responses: [bsz, response_length], output token ids include response tokens
+              from LLM generation and observation tokens from tool_calls.
+            - response_mask: [bsz, response_length], 1 for LLM generated tokens, 0 for observation/padding tokens.
+            - input_ids: [bsz, prompt_length + response_length], whole sequence token ids, including prompt tokens
+              and response tokens.
+            - attention_mask: [bsz, prompt_length + response_length], 0 for padding tokens, 1 for other tokens.
+            - position_ids: [bsz, prompt_length + response_length], incremental position ids.
+
+            For multi-turn conversations:
+            responses:     |<- LLM generation ->|<- tool_calls ->|<- LLM generation ->|<- padding ->|
+            response_mask: | 1, 1, 1, ..., 1, 1 | 0, 0, .., 0, 0 | 1, 1, 1, ..., 1, 1 | 0, 0, ..., 0|
+        """
+        if self.config.multi_turn.enable:
+            return self._req_level_generate_sequences(prompts, **kwargs)
+        return self._batch_level_generate_sequences_with_reflection(prompts, **kwargs)
+
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
+    @torch.no_grad()
+    def _batch_level_generate_sequences_with_reflection(self, prompts: DataProto, **kwargs) -> DataProto:
+        """Generates single-turn sequences for a batch of prompts.
+        For single-turn generation, all prompts are processed in one request.
+        `_batch_level_generate_sequences` involves:
+        1.  Extracting and pre-processing prompt token IDs from the input
+            `prompts`. This includes handling padding and preparing raw
+            token ID lists.
+        2.  Preparing inputs for the SGLang engine, including multi-modal
+            data if present.
+        3.  Invoking the SGLang engine (`self._engine.async_generate`,
+            an async coroutine) with the batch of processed inputs and
+            specified sampling parameters on the master TP rank.
+        4.  Broadcasting the results from the master TP rank to all
+            other TP ranks.
+        5.  Post-processing the engine's output to format the generated
+            token IDs and (if applicable) log probabilities.
+        6.  Constructing the final sequences by concatenating original
+            prompts with the generated responses.
+        7.  Updating attention masks and position IDs to reflect the full
+            concatenated sequences.
+        8.  If `self.config.free_cache_engine` is true, the SGLang engine's
+            KV cache is flushed after generation on the master TP rank.
+        Args:
+            prompts: A `DataProto` object containing the batch of
+              input prompts, including tensor data (like `input_ids`,
+              `attention_mask`) and meta-information (like `eos_token_id`,
+              `do_sample`).
+            **kwargs: Additional keyword arguments that can override the
+              default sampling parameters (e.g., `temperature`, `top_p`,
+              `max_new_tokens`). These are temporarily applied using
+              `update_sampling_params`.
+        Returns:
+            DataProto: A `DataProto` object containing the batch of
+              generated sequences. This includes tensors for `prompts`
+              (original input IDs), `responses` (generated token IDs),
+              `input_ids` (concatenated prompt and response),
+              `attention_mask`, and `position_ids` for the full
+              sequences.
+        Note that in GRPO, if the prompts are validated, we repeat the prompts for rollout.n times in ray_trainer.
+        Thus we do not need to repeat the prompts here and set the sampling parameter n to 1.
+        """
+        # input ids: (bs, prompt_length), left-padded
+        idx = prompts.batch["input_ids"]
+        # attention_mask: (bs, seq_length), left-padded
+        attention_mask = prompts.batch["attention_mask"]
+        position_ids = prompts.batch["position_ids"]
+
+        # used to generate attention mask for the
+        # response based on EOS token position
+        eos_token_id = prompts.meta_info["eos_token_id"]
+
+        batch_size = idx.size(0)
+
+        # Extract non-tensor data
+        non_tensor_batch = prompts.non_tensor_batch
+        if "raw_prompt_ids" not in non_tensor_batch:
+            non_tensor_batch["raw_prompt_ids"] = np.array(
+                [_pre_process_inputs(self.pad_token_id, idx[i]).tolist() for i in range(batch_size)],
+                dtype=object,
+            )
+
+        if "multi_modal_data" in non_tensor_batch:
+            sglang_inputs = []
+            for raw_prompt_ids, multi_modal_data in zip(
+                non_tensor_batch.pop("raw_prompt_ids"),
+                non_tensor_batch.pop("multi_modal_data"),
+                strict=True,
+            ):
+                sglang_inputs.append(
+                    {
+                        "prompt_token_ids": raw_prompt_ids,
+                        "multi_modal_data": multi_modal_data,
+                        "image_data": (
+                            multi_modal_data.get("image", None) if isinstance(multi_modal_data, dict) else None
+                        ),
+                    }
+                )
+        else:
+            sglang_inputs = [
+                {"prompt_token_ids": raw_prompt_ids} for raw_prompt_ids in non_tensor_batch.pop("raw_prompt_ids")
+            ]
+
+        # Ensure token IDs are lists or numpy arrays
+        for input_data in sglang_inputs:
+            if isinstance(input_data["prompt_token_ids"], np.ndarray):
+                input_data["prompt_token_ids"] = input_data["prompt_token_ids"].tolist()
+            elif not isinstance(input_data["prompt_token_ids"], list):
+                raise TypeError(
+                    f"prompt_token_ids must be a list or numpy array, got {type(input_data['prompt_token_ids'])}"
+                )
+
+        # Extract token IDs and image data for SGLang Engine
+        idx_list = [input_data["prompt_token_ids"] for input_data in sglang_inputs]
+        image_list = [input_data.get("image_data", None) for input_data in sglang_inputs]
+
+        do_sample = prompts.meta_info.get("do_sample", True)
+        is_validate = prompts.meta_info.get("validate", False)
+
+        # Create request-level sampling parameters
+        request_sampling_params = self.sampling_params.copy()
+        if not do_sample:
+            request_sampling_params.update(
+                {
+                    "n": 1,
+                    "presence_penalty": 0.0,
+                    "frequency_penalty": 0.0,
+                    "repetition_penalty": 1.0,
+                    "temperature": 0,
+                    "top_p": 1,
+                    "top_k": -1,
+                    "ignore_eos": False,
+                    "min_new_tokens": 0,
+                    "max_new_tokens": self.config.response_length,
+                    "skip_special_tokens": True,
+                    "spaces_between_special_tokens": True,
+                }
+            )
+        elif is_validate:
+            request_sampling_params.update(
+                {
+                    "top_k": self.config.val_kwargs.top_k,
+                    "top_p": self.config.val_kwargs.top_p,
+                    "temperature": self.config.val_kwargs.temperature,
+                    "n": 1,  # if validate, already repeat in ray_trainer
+                }
+            )
+
+        # Update with any additional kwargs
+        request_sampling_params.update(kwargs)
+        # 你的“默认”采样参数（公用部分）
+        base = request_sampling_params  # dict，比如温度、top_p 等
+
+        user_max_new = base.get("max_new_tokens", 3072)  # 你现在的设置
+        sampling_params_list = []
+
+        for ids in idx_list:
+            prior_response_length = _count_tokens_after_marker(ids, marker=ASSISTANT_MARKER)
+            space_left = max(0, self.config.response_length - prior_response_length)
+            eff_max_new = max(0, min(user_max_new, space_left))
+            sp = dict(base)
+            sp["max_new_tokens"] = eff_max_new
+            sampling_params_list.append(sp)
+
+        if self._tp_rank == 0:
+            loop = asyncio.get_event_loop()
+            output = loop.run_until_complete(
+                self._engine.async_generate(
+                    prompt=None,  # because we have already convert it to prompt token id
+                    sampling_params=sampling_params_list,
+                    return_logprob=True,
+                    input_ids=idx_list,
+                    image_data=image_list,
+                )
+            )
+        else:
+            output = None
+
+        # Most naive implementation, can extract tensor and send via gloo if too slow
+        dist.barrier()
+        [output] = broadcast_pyobj(
+            data=[output],
+            rank=self._rank,
+            dist_group=self._device_mesh_cpu["tp"].get_group(),
+            src=self._device_mesh_cpu["tp"].mesh[0].item(),
+            force_cpu_device=False,
+        )
+        out = _post_process_outputs_with_reflection(self.processing_class, output, idx_list)
 
         response = out[0].to(idx.device)
         rollout_log_probs = None

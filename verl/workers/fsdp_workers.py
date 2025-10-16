@@ -753,6 +753,46 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         return output
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    @DistProfiler.annotate(color="red", role="rollout_generate")
+    def generate_sequences_with_reflection(self, prompts: DataProto, **kwargs):
+        # Support all hardwares
+        prompts = prompts.to(get_device_id())
+
+        assert self._is_rollout
+
+        meta_info = {
+            "eos_token_id": self.generation_config.eos_token_id
+            if self.generation_config is not None
+            else self.tokenizer.eos_token_id,
+            "pad_token_id": self.generation_config.pad_token_id
+            if self.generation_config is not None
+            else self.tokenizer.pad_token_id,
+        }
+        prompts.meta_info.update(meta_info)
+        timing_generate = {}
+        with self.rollout_sharding_manager:
+            log_gpu_memory_usage("After entering rollout sharding manager", logger=logger)
+
+            prompts = self.rollout_sharding_manager.preprocess_data(prompts)
+            with simple_timer("generate_sequences", timing_generate):
+                output = self.rollout.generate_sequences_with_reflection(prompts=prompts, **kwargs)
+
+            log_gpu_memory_usage("After rollout generation", logger=logger)
+
+            output = self.rollout_sharding_manager.postprocess_data(output)
+
+        timing_generate.update(self.rollout_sharding_manager.timing)
+        # We calculate the average timing across all ranks
+        # to make sure meta_info["timing"] is the same
+        timing_generate = reduce_timing(timing_generate)
+        output.meta_info["timing"] = timing_generate
+        output = output.to("cpu")
+
+        # clear kv cache
+        get_torch_device().empty_cache()
+        return output
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     @DistProfiler.annotate(color="blue", role="actor_compute_log_prob")
     def compute_log_prob(self, data: DataProto):
         # when is_lora is True, we use the actor without lora applied to calculate the log_prob

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from omegaconf import MISSING
 
@@ -23,7 +23,7 @@ from verl.trainer.config import CheckpointConfig
 from .engine import FSDPEngineConfig, McoreEngineConfig
 from .optimizer import OptimizerConfig
 
-__all__ = ["PolicyLossConfig", "ActorConfig", "FSDPActorConfig", "McoreActorConfig"]
+__all__ = ["PolicyLossConfig", "ProcessGRPOAdvConfig", "ActorConfig", "FSDPActorConfig", "McoreActorConfig"]
 
 
 @dataclass
@@ -48,6 +48,18 @@ class PolicyLossConfig(BaseConfig):
     kl_cov_ratio: float = 0.0002
     ppo_kl_coef: float = 0.1
 
+@dataclass
+class ProcessGRPOAdvConfig(BaseConfig):
+  coef_bad_step_if_adv_pos: float = 1.0
+  # Adv_step_i<0 时，正确step乘此系数
+  coef_good_step_if_adv_neg: float = 1.0
+  # --- top-n 相关 ---
+  # 每个step的前n个token特殊计算 adv；0表示不启用
+  top_n: Union[int, float] = 0
+  # 特殊处理的方法 "scale" 表示扩大前 n 个 token 的优势， "truncate" 表示除前 n 个 token 之外的优势全部置 0
+  topn_mode: str = "truncate"
+  # topn_mode="scale"时，放大的倍数            
+  topn_scale: float = 1.0
 
 @dataclass
 class ActorConfig(BaseConfig):
@@ -109,6 +121,7 @@ class ActorConfig(BaseConfig):
     checkpoint: CheckpointConfig = field(default_factory=CheckpointConfig)
     optim: OptimizerConfig = field(default_factory=OptimizerConfig)
     use_fused_kernels: bool = False
+    process_grpo_adv: ProcessGRPOAdvConfig = field(default_factory=ProcessGRPOAdvConfig)
 
     def __post_init__(self):
         """Validate actor configuration parameters."""

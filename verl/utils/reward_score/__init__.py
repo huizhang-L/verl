@@ -102,6 +102,11 @@ def default_compute_score(
 
         res = search_r1_like_qa_em.compute_score(solution_str, ground_truth)
 
+    elif data_source.startswith("skyworkmath_"):
+        from . import skyworkmath
+
+        res = skyworkmath.compute_score(solution_str, ground_truth)
+
     else:
         raise NotImplementedError(f"Reward function is not implemented for {data_source=}")
 

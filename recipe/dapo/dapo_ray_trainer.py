@@ -18,8 +18,11 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import uuid
 from collections import defaultdict
+from typing import Dict, Any, Tuple, List
 from copy import deepcopy
 from pprint import pprint
+import json
+import os
 
 import numpy as np
 import torch
@@ -47,6 +50,122 @@ class RayDAPOTrainer(RayPPOTrainer):
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
     """
+    def _to_jsonable(self, x: Any):
+        """将任意常见科学计算对象转换为 JSON 可序列化类型（递归）。
+        规则：
+        - torch.Tensor: 标量->item()；否则->cpu().tolist()
+        - np.ndarray: tolist()
+        - np.generic: item()
+        - dict/list/tuple/set: 递归处理
+        - 其它非常见类型: 转成 str(x) 兜底
+        """
+        # torch tensor
+        if torch.is_tensor(x):
+            if x.numel() == 1:
+                return x.item()
+            return x.detach().cpu().tolist()
+
+        # numpy array / numpy scalar
+        if isinstance(x, np.ndarray):
+            # 注意 object 数组也能 tolist()，递归继续处理
+            return [self._to_jsonable(e) for e in x.tolist()]
+        if isinstance(x, np.generic):  # e.g. np.int64, np.float32
+            return x.item()
+
+        # 基本容器（递归）
+        if isinstance(x, dict):
+            return {k: self._to_jsonable(v) for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return [self._to_jsonable(e) for e in x]
+        if isinstance(x, set):
+            return [self._to_jsonable(e) for e in x]
+
+        # bytes/bytearray 可按需定制；这里用 str 兜底
+        if isinstance(x, (bytes, bytearray)):
+            # 你也可以选择 base64.b64encode(x).decode('ascii')
+            # 这里用可读性更好的 repr 形式
+            try:
+                return x.decode("utf-8")
+            except Exception:
+                return repr(x)
+
+        # 基本类型（int/float/bool/str/None）原样返回
+        if isinstance(x, (int, float, bool, str)) or x is None:
+            return x
+
+        # 其他非常见类型统一转成字符串避免崩溃
+        return str(x)
+
+    def _dump_generations(self, batch, inputs, outputs, scores, advantages, reward_extra_infos_dict, dump_path, entropies=None, offset_mapping_info=None):
+        """Dump rollout/validation samples as JSONL."""
+        os.makedirs(dump_path, exist_ok=True)
+        filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
+
+        n = len(inputs)
+        base_data = {
+            "input": inputs,
+            "output": outputs,
+            "score": scores,
+            "global_step": [self.global_steps] * n,
+        }
+
+        # 如果传入了 token 级熵，确保与样本数一致后加入
+        if entropies is not None:
+            assert len(entropies) == n, f"len(entropies)={len(entropies)} != n={n}"
+            # 每个元素是一条样本对应的 list[float]
+            base_data["token_entropies"] = entropies
+        if advantages is not None:
+            assert len(advantages) == n, f"len(advantages)={len(advantages)} != n={n}"
+            # 每个元素是一条样本对应的 list[float]
+            base_data["advantages"] = advantages
+        
+        if offset_mapping_info is not None:
+            assert len(offset_mapping_info) == n, f"len(offset_mapping_info)={len(offset_mapping_info)} != n={n}"
+            # 每个元素是一条样本对应的 list[float]
+            base_data["offset_mapping_info"] = offset_mapping_info
+        # if response_word_list is not None:
+        #     # assert len(entropies) == n, f"len(entropies)={len(entropies)} != n={n}"
+        #     # 每个元素是一条样本对应的 list[float]
+        #     base_data["response_word_list"] = response_word_list
+        # 合并额外信息（长度必须与 n 一致）
+        for k, v in reward_extra_infos_dict.items():
+            v = batch.non_tensor_batch[k]
+            if len(v) == n:
+                base_data[k] = v
+
+        # 逐行写 JSONL
+        lines = []
+        for i in range(n):
+            # 按原逻辑取第 i 条
+            entry_raw = {k: v[i] for k, v in base_data.items()}
+
+            # 先尝试序列化（快速路径）
+            try:
+                entry = self._to_jsonable(entry_raw)
+                lines.append(json.dumps(entry, ensure_ascii=False))
+                continue
+            except Exception:
+                # 如果仍失败，逐字段定位并兜底
+                bad_keys = []
+                for k, val in entry_raw.items():
+                    try:
+                        json.dumps(self._to_jsonable({k: val}), ensure_ascii=False)
+                    except Exception:
+                        bad_keys.append((k, type(val)))
+                # 打印一下问题键，便于排查
+                if bad_keys:
+                    print(
+                        "[WARN] JSON serialization failed at keys: "
+                        + ", ".join(f"{k}({t.__name__})" for k, t in bad_keys)
+                    )
+                # 兜底：将整个 entry_raw 做转换再序列化
+                entry = self._to_jsonable(entry_raw)
+                lines.append(json.dumps(entry, ensure_ascii=False))
+
+        with open(filename, "w") as f:
+            f.write("\n".join(lines) + "\n")
+
+        print(f"Dumped generations to {filename}")
 
     def fit(self):
         """
@@ -324,7 +443,30 @@ class RayDAPOTrainer(RayPPOTrainer):
                             actor_output = self.actor_rollout_wg.update_actor(batch)
                         actor_output_metrics = reduce_metrics(actor_output.meta_info["metrics"])
                         metrics.update(actor_output_metrics)
+                    
+                    rollout_data_dir = self.config.trainer.get("rollout_data_dir", None)
+                    if rollout_data_dir:
+                        with marked_timer("dump_rollout_generations", timing_raw, color="green"):
+                            inputs = self.tokenizer.batch_decode(batch.batch["prompts"], skip_special_tokens=True)
+                            outputs = self.tokenizer.batch_decode(batch.batch["responses"], skip_special_tokens=True)
+                            scores = batch.batch["token_level_scores"].sum(-1).cpu().tolist()
+                            advantages = batch.batch["advantages"].detach().cpu().tolist()
+                            if "request_id" in batch.non_tensor_batch:
+                                reward_extra_infos_dict.setdefault(
+                                    "request_id",
+                                    batch.non_tensor_batch["request_id"].tolist(),
+                                )
 
+                            self._dump_generations(
+                                batch=batch,
+                                inputs=inputs,
+                                outputs=outputs,
+                                scores=scores,
+                                advantages=advantages,
+                                reward_extra_infos_dict=reward_extra_infos_dict,
+                                dump_path=rollout_data_dir,
+                                # offset_mapping_info=offset_mapping_info,
+                            )
                     # validate
                     if (
                         self.val_reward_fn is not None

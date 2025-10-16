@@ -1,6 +1,7 @@
 
 **/*.pt
 **/checkpoints
+**/checkpoints_verl
 **/wget-log
 **/_build/
 **/*.ckpt
@@ -8,6 +9,9 @@
 **/*.tar.gz
 **/playground
 **/wandb
+**/swanlab
+**/swanlog
+**/data
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -124,3 +128,7 @@ logs
 log
 outputs
 .history
+
+# added by lhj
+**/*notrack*
+**/*notrack*/ 

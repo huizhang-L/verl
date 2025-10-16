@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: dapo-8k-train_bsz8-ppo_bsz64-rollout_n8-critique-noreflection-nostepadv-steptopn
+    bash_path: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/process_adv_2/qwen2.5-instruct-7b/dapo_math/dapo-8k-train_bsz8-ppo_bsz64-rollout_n8-critique-noreflection-nostepadv-steptopn.sh
+    nnodes: 1
+    n_gpus_per_node: 8
+    output_dir: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/checkpoints_verl/process_adv_2/qwen2.5-7b-instruct/dapo_math/DAPO/dapo-8k-train_bsz8-ppo_bsz64-rollout_n8-critique-noreflection-nostepadv-steptopn

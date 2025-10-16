@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: process_dapo-8k-train_bsz8-ppo_bsz64-rollout_n8
+    bash_path: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/process_adv_1/qwen2.5-instruct-7b/dapo_math/dapo-8k-train_bsz8-ppo_bsz64-rollout_n8.sh
+    nnodes: 2
+    n_gpus_per_node: 8
+    output_dir: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/checkpoints_verl/process_adv_1/qwen2.5-instruct-7b/dapo_math/DAPO/process_dapo-8k-train_bsz8-ppo_bsz64-rollout_n8

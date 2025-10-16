@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: verl-dapo-h-test
+    bash_path: /mnt/shared-storage-user/lvhuijie/my_git_repo/verl/lhj_scripts/DAPO/qwen2.5-instruct-7b/dapo_math/dapo-8k-train_bsz8-ppo_bsz64-rollout_n8-test.sh
+    nnodes: 1
+    n_gpus_per_node: 2
+    output_dir: /nvme/lvhuijie/mnt/ailab-llmfudan/checkpoints_verl/outcome_reward/qwen2.5-7b-instruct/dapo_math/DAPO/dapo-8k-train_bsz8-ppo_bsz64-rollout_n8

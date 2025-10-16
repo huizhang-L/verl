@@ -55,11 +55,27 @@ def run_ppo(config) -> None:
         # Set environment variables in the runtime environment to control tokenizer parallelism,
         # NCCL debug level, VLLM logging level, and allow runtime LoRA updating
         # `num_cpus` specifies the number of CPU cores Ray can use, obtained from the configuration
+        # In most cases, it is enough to just call this method with no arguments.
+        # This will autodetect an existing Ray cluster or start a new Ray instance if
+        # no existing cluster is found:
+
+        # .. testcode::
+
+        #     ray.init()
+
+        # To explicitly connect to an existing local cluster, use this as follows. A
+        # ConnectionError will be thrown if no existing local cluster is found.
+
+        # .. testcode::
+        #     :skipif: True
+
+        #     ray.init(address="auto")
         ray.init(
             runtime_env=get_ppo_ray_runtime_env(),
             num_cpus=config.ray_init.num_cpus,
         )
-
+    # print(os.environ["PATH"])
+    # print(os.environ["WANDB_API_KEY"])
     # Create a remote instance of the TaskRunner class, and
     # Execute the `run` method of the TaskRunner instance remotely and wait for it to complete
     if (

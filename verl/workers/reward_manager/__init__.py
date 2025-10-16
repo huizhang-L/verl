@@ -17,6 +17,10 @@ from .batch import BatchRewardManager
 from .dapo import DAPORewardManager
 from .naive import NaiveRewardManager
 from .prime import PrimeRewardManager
+from .modified_dapo import ModifiedDAPORewardManager
+from .batch_judge_dapo import BatchJudgeDAPORewardManager
+from .process_dapo import ProcessDAPORewardManager
+from .process_dapo_volc import ProcessDAPOVOLCRewardManager
 
 # Note(haibin.lin): no need to include all reward managers here in case of complicated dependencies
 __all__ = [
@@ -24,6 +28,10 @@ __all__ = [
     "DAPORewardManager",
     "NaiveRewardManager",
     "PrimeRewardManager",
+    "ModifiedDAPORewardManager",
+    "BatchJudgeDAPORewardManager",
+    "ProcessDAPORewardManager",
+    "ProcessDAPOVOLCRewardManager",
     "register",
     "get_reward_manager_cls",
 ]

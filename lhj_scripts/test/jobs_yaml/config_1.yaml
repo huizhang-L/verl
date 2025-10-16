@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: DAPO-Qwen3-4B-test
+    bash_path: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/redundancy/qwen3-4b/dapo_math/DAPO/example.sh
+    nnodes: 4
+    n_gpus_per_node: 8
+    output_dir: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/checkpoints_verl/redundancy/qwen3-4b/dapo_math/DAPO/DAPO-Qwen3-4B-test

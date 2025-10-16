@@ -221,6 +221,11 @@ def compute_advantage(
     num_repeat: int = 1,
     norm_adv_by_std_in_grpo: bool = True,
     config: Optional[AlgoConfig] = None,
+    coef_bad_step_if_adv_pos: float = -0.3,
+    coef_good_step_if_adv_neg: float = -0.3,
+    top_n: int = 0,
+    topn_mode: str = "truncate",
+    topn_scale: float = 2.0
 ) -> DataProto:
     """Compute advantage estimates for policy optimization.
 
@@ -270,6 +275,30 @@ def compute_advantage(
             response_mask=grpo_calculation_mask,
             index=data.non_tensor_batch["uid"],
             norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+        )
+        data.batch["advantages"] = advantages
+        data.batch["returns"] = returns
+    elif adv_estimator == AdvantageEstimator.PROCESS_GRPO:
+        # Initialize the mask for GRPO calculation
+        grpo_calculation_mask = data.batch["response_mask"]
+        response_step_ids = data.batch['response_step_ids']
+        process_step_critique = data.non_tensor_batch.get('process_step_critique', None)
+        prior_response_mask = data.batch.get("prior_response_mask", None)
+        # Call compute_grpo_outcome_advantage with parameters matching its definition
+        advantages, returns = core_algos.compute_process_grpo_advantage(
+            token_level_rewards=data.batch["token_level_rewards"],
+            response_mask=grpo_calculation_mask,
+            index=data.non_tensor_batch["uid"],
+            step_ids=response_step_ids,
+            step_critique=process_step_critique,
+            prior_response_mask=prior_response_mask,
+            coef_bad_step_if_adv_pos=coef_bad_step_if_adv_pos,
+            coef_good_step_if_adv_neg=coef_good_step_if_adv_neg,
+            top_n=top_n,
+            topn_mode=topn_mode,
+            topn_scale=topn_scale,
+            norm_adv_by_std_in_grpo=norm_adv_by_std_in_grpo,
+
         )
         data.batch["advantages"] = advantages
         data.batch["returns"] = returns

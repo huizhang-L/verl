@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: verl-dapo-8k-trainbsz8-ppobsz64-rolloutn8
+    bash_path: /mnt/shared-storage-user/lvhuijie/my_git_repo/verl/lhj_scripts/DAPO/qwen2.5-instruct-7b/dapo_math/dapo-8k-trainbsz8-ppobsz64-rolloutn8.sh
+    nnodes: 1
+    n_gpus_per_node: 2
+    output_dir: /nvme/lvhuijie/mnt/ailab-llmfudan/checkpoints_verl/outcome_reward/qwen2.5-7b-instruct/dapo_math/DAPO/verl-dapo-8k-trainbsz8-ppobsz64-rolloutn8

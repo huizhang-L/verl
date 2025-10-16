@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name:  qwen3-0_6b_gsm8k_GRPO_test
+    bash_path: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/test/qwen3-0.6b/test/GRPO/example.sh
+    nnodes: 1
+    n_gpus_per_node: 8
+    output_dir: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/checkpoints_verl/test/qwen3-0.6b/test/GRPO/test

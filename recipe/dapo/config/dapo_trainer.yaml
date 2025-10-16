@@ -1,6 +1,6 @@
 hydra:
   searchpath:
-    - file://verl/trainer/config
+    - file:///mnt/shared-storage-user/lvhuijie/my_git_repo/verl/verl/trainer/config
 
 defaults:
   - ppo_trainer

@@ -134,6 +134,53 @@ custom_reward_function:
   # The name of the reward function within the specified file. Default is 'compute_score'.
   name: compute_score
 
+  # sglang client service
+  # 从环境变量中配置 url 和 API key 以及 model name
+  # 不需要在此手动配置
+  llm_process_reward:
+    enable: False
+    temperature: 0.1
+    max_tokens: 512
+    concurrency: 4
+    coefficient: 0.5
+    # 将完整的回复按照 step 数进行切分，然后分块输入大模型，提供过程奖励
+    split_step_num: 10
+    enable_think: True
+
+  # sglang client service
+  # 从环境变量中配置 url 和 API key 以及 model name
+  # 不需要在此手动配置
+  llm_process_critique:
+    enable: False
+    temperature: 0.1
+    max_tokens: 512
+    concurrency: 4
+    coefficient: 0.5
+    # 将完整的回复按照 step 数进行切分，然后分块输入大模型，提供分块的 critique
+    split_step_num: 1
+    first_error: False
+    enable_think: True
+    presence_penalty: 1.5
+  
+  reflection:
+    enable: False
+    temperature: 0.1
+    max_tokens: 512
+    concurrency: 4
+    # 将完整的回复按照 step 数进行切分，然后分块输入大模型，提供分块的 critique
+    split_step_num: 1
+    first_error: False
+    enable_think: True
+    presence_penalty: 1.5
+
+
+  process_reward_model:
+    enable: False
+    temperature: 0.1
+    max_tokens: 512
+    concurrency: 4
+    coefficient: 0.5
+
 # config for the algorithm
 algorithm:
 

@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: DAPO-debug
+    bash_path: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/lhj_scripts/redundancy/debug.sh
+    nnodes: 1
+    n_gpus_per_node: 8
+    output_dir: /fs-computility/llm_fudan/lvhuijie/my_git_repo/verl/checkpoints_verl/redundancy/debug/DAPO/DAPO-debug
