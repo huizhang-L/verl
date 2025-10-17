@@ -762,6 +762,8 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
         num_prompt_in_next_batch = 0
         num_traj_in_next_batch = 0
         num_gen_batches = 0
+        # 进入一次这个 for 循环成为一次 fit 调用
+        # 一次 fit 调用可能执行两次 update_actor
         for epoch in range(self.config.trainer.total_epochs):
             for batch_dict in self.train_dataloader:
                 metrics = {}
@@ -944,6 +946,8 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                         # for prompt_uid, metric_vals in prompt_uid2metric_vals.items():
                         #     prompt_uid2metric_std[prompt_uid] = np.std(metric_vals)
 
+                        # 当前 step ，n 次 rollout 错误数超过指定的 query，需要进行 reflection
+                        # 如此确保只有难题进行 reflection
                         err_prompt_uids = [
                             uid
                             for uid, val in prompt_uid2metric_vals.items()
@@ -951,6 +955,7 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                         ]
                         num_prompt_in_next_batch += len(err_prompt_uids)
                         
+                        # 一个 prompt 采样的 n 个轨迹，都需要加入下一个 step 的优化中
                         err_traj_idxs = []
                         for idx, traj_from_prompt_uid in enumerate(new_batch.non_tensor_batch["uid"]):
                             if traj_from_prompt_uid in err_prompt_uids:
@@ -961,7 +966,14 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                         #         err_traj_idxs.append(idx)
                         num_traj_in_next_batch += len(err_traj_idxs)
 
+                        # 此处拿到了错误的轨迹完整数据
                         err_batch = new_batch[err_traj_idxs]
+                        # 现在调用一次 fit 可能会执行两次 update_actor
+                        # 第一次 update 是常规的，凑够一波数据之后的 update
+                        # 第二次发生在，如果这次的数据，全都符合错误轨迹的要求，就意味着下一 step 用到的 prompt 还是这些
+                        # 因此直接在 update_actor 之后，再次执行了一次 rollout+reward+update_actor
+                        # 此处的 err_batch_prior 是上一次 fit 调用中第二次 rollout 完之后，得到的错误的数据 batch
+                        # 可以在当前 fit 中继续参与训练
                         if err_batch_prior is not None:
                             err_batch =  DataProto.concat([err_batch_prior, err_batch])
                         next_batch = err_batch if next_batch is None else DataProto.concat([next_batch, err_batch])
@@ -1074,6 +1086,7 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                         metrics.update(critic_output_metrics)
 
                     # implement critic warmup
+                    # 当前 fit 的第一次 update_actor
                     if self.config.trainer.critic_warmup <= self.global_steps:
                         # update actor
                         with marked_timer("update_actor", timing_raw, "red"):
@@ -1160,6 +1173,7 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                         with marked_timer("save_checkpoint", timing_raw, "green"):
                             self._save_checkpoint()
                     
+                    # 这里只是做了 需要到下一个step 的数据的 rollout 和 获取奖励
                     if self.config.custom_reward_function.reflection.enable:
                         with marked_timer("err_step", timing_raw, "red"):
                             # === 错误样本引入反思后继续 rollout，用于下一个 batch 更新 Actor ===
@@ -1245,6 +1259,9 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                 self.global_steps += 1
                 self.gen_steps += 1
                 
+                # 当前 fit 可能的第二次 update_actor
+                # 需要注意的是，当前我们只允许一个数据 reflection 一次，因此
+                # 因此一个 fit 中的第二次 update_actor 之后的数据一定不会传到下一次 fit 调用
                 if next_completion_batch is not None and len(next_completion_batch) == self.config.data.train_batch_size * self.config.actor_rollout_ref.rollout.n:
                     next_metrics = {}
                     with marked_timer("step", timing_raw, "red"):
@@ -1440,6 +1457,7 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                     timing_raw = defaultdict(float)  # clear timing
 
                     next_metrics["train/num_gen_batches"] = num_gen_batches
+                    # 清空数据
                     next_completion_batch = None
                     num_gen_batches = 0
 
