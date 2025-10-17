@@ -96,7 +96,7 @@ class RayDAPOTrainer(RayPPOTrainer):
         # 其他非常见类型统一转成字符串避免崩溃
         return str(x)
 
-    def _dump_generations(self, batch, inputs, outputs, scores, advantages, reward_extra_infos_dict, dump_path, entropies=None, offset_mapping_info=None):
+    def _dump_noneval_generations(self, batch, inputs, outputs, scores, advantages, reward_extra_infos_dict, dump_path, entropies=None, offset_mapping_info=None):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
         filename = os.path.join(dump_path, f"{self.global_steps}.jsonl")
@@ -457,7 +457,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                                     batch.non_tensor_batch["request_id"].tolist(),
                                 )
 
-                            self._dump_generations(
+                            self._dump_noneval_generations(
                                 batch=batch,
                                 inputs=inputs,
                                 outputs=outputs,

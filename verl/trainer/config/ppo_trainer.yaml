@@ -130,10 +130,10 @@ custom_reward_function:
   # The path to the file containing your customized reward function.
   # If not specified, pre-implemented reward functions will be used.
   path: null
-
+  eval_path: null
   # The name of the reward function within the specified file. Default is 'compute_score'.
   name: compute_score
-
+  eval_name: compute_score
   # sglang client service
   # 从环境变量中配置 url 和 API key 以及 model name
   # 不需要在此手动配置

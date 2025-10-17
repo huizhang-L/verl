@@ -225,6 +225,7 @@ class UniversalAIClient:
         model_type: ModelType = "chat",
         reward_reducer: ReducerName = "mean",
         dot_ref: Optional[List[float]] = None,  # reducer='dot' 时需要
+        use_proxy: Optional[bool | List[bool]] = None,
         proxy_url: Optional[str] = None,
         proxy_username: Optional[str] = None,
         proxy_password: Optional[str] = None,
@@ -238,7 +239,13 @@ class UniversalAIClient:
         if isinstance(model, str):
             model = [model]
 
-        assert len(base_url) == len(api_key) == len(model)
+        if isinstance(use_proxy, bool):
+            use_proxy = [use_proxy]
+
+        if use_proxy is None:
+            use_proxy = [False] * len(api_key)
+
+        assert len(base_url) == len(api_key) == len(model) == len(use_proxy)
 
         self.num_clients = len(api_key)
         self.client_idx = 0
@@ -254,31 +261,33 @@ class UniversalAIClient:
 
         self.api_key = api_key
         self.model = model
+        self.use_proxy = use_proxy
         self.proxy_url = proxy_url
         self.proxy_username = proxy_username
         self.proxy_password = proxy_password
-        if self.proxy_url:
-            self.client = [requests.post(urljoin(self.proxy_url, "create"),
-                json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
-                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
-            for ak, bu in zip(self.api_key, self.base_url)]
-            self.async_client = [requests.post(urljoin(self.proxy_url, "async_create"),
-                json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
-                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
-            for ak, bu in zip(self.api_key, self.base_url)]
-        else:
-            self.client = [OpenAI(
-                api_key=ak,
-                base_url=bu,
-                timeout=timeout,
-                default_headers=extra_headers or {},
-            ) for ak, bu in zip(self.api_key, self.base_url)]
-            self.async_client = [AsyncOpenAI(
-                api_key=ak,
-                base_url=bu,
-                timeout=timeout,
-                default_headers=extra_headers or {},
-            ) for ak, bu in zip(self.api_key, self.base_url)]
+        self.client = []
+        self.async_client = []
+        for idx, (ak, bu) in enumerate(zip(self.api_key, self.base_url)):
+            if self.use_proxy[idx]:
+                self.client.append(requests.post(urljoin(self.proxy_url, "create"),
+                    json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
+                    auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json())
+                self.async_client.append(requests.post(urljoin(self.proxy_url, "async_create"),
+                    json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
+                    auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json())
+            else:
+                self.client.append(OpenAI(
+                    api_key=ak,
+                    base_url=bu,
+                    timeout=timeout,
+                    default_headers=extra_headers or {},
+                ))
+                self.async_client.append(AsyncOpenAI(
+                    api_key=ak,
+                    base_url=bu,
+                    timeout=timeout,
+                    default_headers=extra_headers or {},
+                ))
         self.force_chat = force_chat
         self.model_type: ModelType = model_type
 
@@ -315,10 +324,11 @@ class UniversalAIClient:
         if self.model_type != "chat":
             raise RuntimeError("respond_text only valid when model_type='chat'")
 
+        client_idx = self.get_client()
+
         if not self.force_chat:
-            if self.proxy_url:
+            if self.use_proxy[client_idx]:
                 try:
-                    client_idx = self.get_client()
                     return requests.post(urljoin(self.proxy_url, "responses_create"),
                         json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
                         auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
@@ -326,7 +336,6 @@ class UniversalAIClient:
                     pass
             else:
                 try:
-                    client_idx = self.get_client()
                     resp = self.client[client_idx].responses.create(
                         model=self.model[client_idx],
                         input=text,
@@ -340,13 +349,11 @@ class UniversalAIClient:
                 except Exception:
                     pass
 
-        if self.proxy_url:
-            client_idx = self.get_client()
+        if self.use_proxy[client_idx]:
             return requests.post(urljoin(self.proxy_url, "chat_completions_create"),
                 json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             chat = self.client[client_idx].chat.completions.create(
                 model=self.model[client_idx],
                 messages=[{"role": "user", "content": text}],
@@ -366,11 +373,12 @@ class UniversalAIClient:
         if self.model_type != "chat":
             raise RuntimeError("respond_messages only valid when model_type='chat'")
 
+        client_idx = self.get_client()
+
         if not self.force_chat:
             text = self._messages_to_text(messages)
-            if self.proxy_url:
+            if self.use_proxy[client_idx]:
                 try:
-                    client_idx = self.get_client()
                     return requests.post(urljoin(self.proxy_url, "responses_create"),
                         json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
                         auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
@@ -378,7 +386,6 @@ class UniversalAIClient:
                     pass
             else:
                 try:
-                    client_idx = self.get_client()
                     resp = self.client[client_idx].responses.create(
                         model=self.model[client_idx],
                         input=text,
@@ -390,13 +397,11 @@ class UniversalAIClient:
                 except Exception:
                     pass
         
-        if self.proxy_url:
-            client_idx = self.get_client()
+        if self.use_proxy[client_idx]:
             return requests.post(urljoin(self.proxy_url, "chat_completions_create"),
                 json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             chat = self.client[client_idx].chat.completions.create(
                 model=self.model[client_idx],
                 messages=messages,
@@ -416,10 +421,11 @@ class UniversalAIClient:
         if self.model_type != "chat":
             raise RuntimeError("a_respond_text only valid when model_type='chat'")
 
+        client_idx = self.get_client()
+
         if not self.force_chat:
-            if self.proxy_url:
+            if self.use_proxy[client_idx]:
                 try:
-                    client_idx = self.get_client()
                     return await requests.post(urljoin(self.proxy_url, "async_responses_create"),
                         json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
                         auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
@@ -427,7 +433,6 @@ class UniversalAIClient:
                     pass
             else:
                 try:
-                    client_idx = self.get_client()
                     resp = await self.async_client[client_idx].responses.create(
                         model=self.model[client_idx],
                         input=text,
@@ -439,13 +444,11 @@ class UniversalAIClient:
                 except Exception:
                     pass
 
-        if self.proxy_url:
-            client_idx = self.get_client()
+        if self.use_proxy[client_idx]:
             return await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
                 json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             chat = await self.async_client[client_idx].chat.completions.create(
                 model=self.model[client_idx],
                 messages=[{"role": "user", "content": text}],
@@ -465,11 +468,12 @@ class UniversalAIClient:
         if self.model_type != "chat":
             raise RuntimeError("a_respond_messages only valid when model_type='chat'")
 
+        client_idx = self.get_client()
+
         if not self.force_chat:
             text = self._messages_to_text(messages)
-            if self.proxy_url:
+            if self.use_proxy[client_idx]:
                 try:
-                    client_idx = self.get_client()
                     return await requests.post(urljoin(self.proxy_url, "async_responses_create"),
                         json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
                         auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
@@ -477,7 +481,6 @@ class UniversalAIClient:
                     pass
             else:
                 try:
-                    client_idx = self.get_client()
                     resp = await self.async_client[client_idx].responses.create(
                         model=self.model[client_idx],
                         input=text,
@@ -489,13 +492,11 @@ class UniversalAIClient:
                 except Exception:
                     pass
 
-        if self.proxy_url:
-            client_idx = self.get_client()
+        if self.use_proxy[client_idx]:
             return await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
                 json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             chat = await self.async_client[client_idx].chat.completions.create(
                 model=self.model[client_idx],
                 messages=messages,
@@ -601,13 +602,13 @@ class UniversalAIClient:
         if self.model_type != "embedding":
             raise RuntimeError("embed_one only valid when model_type='embedding'")
 
-        if self.proxy_url:
-            client_idx = self.get_client()
+        client_idx = self.get_client()
+
+        if self.use_proxy[client_idx]:
             vec = requests.post(urljoin(self.proxy_url, "embeddings"),
                 json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             resp = self.client[client_idx].embeddings.create(
                 model=self.model[client_idx],
                 input=text,
@@ -666,13 +667,13 @@ class UniversalAIClient:
         if self.model_type != "embedding":
             raise RuntimeError("a_embed_one only valid when model_type='embedding'")
 
-        if self.proxy_url:
-            client_idx = self.get_client()
+        client_idx = self.get_client()
+
+        if self.use_proxy[client_idx]:
             vec = await requests.post(urljoin(self.proxy_url, "async_embeddings"),
                 json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
                 auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            client_idx = self.get_client()
             resp = await self.async_client[client_idx].embeddings.create(
                 model=self.model[client_idx],
                 input=text,
@@ -1416,6 +1417,7 @@ class ProcessDAPORewardManager:
         base_url = os.getenv("LLM_AS_A_JUDGE_SERVICE_URL")
         api_key = os.getenv("LLM_AS_A_JUDGE_SERVICE_API_KEY")
         model_name = os.getenv("LLM_AS_A_JUDGE_SERVICE_MODEL")
+        use_proxy = os.getenv("LLM_AS_A_JUDGE_USE_PROXY")
         proxy_url = os.getenv("LLM_AS_A_JUDGE_PROXY_URL")
         proxy_username = os.getenv("LLM_AS_A_JUDGE_PROXY_USERNAME")
         proxy_password = os.getenv("LLM_AS_A_JUDGE_PROXY_PASSWORD")
@@ -1426,6 +1428,7 @@ class ProcessDAPORewardManager:
             model=model_name.split(","),
             model_type="chat",
             force_chat=True,
+            use_proxy=[True if up == str(True) else False for up in use_proxy.split(",")],
             proxy_url=proxy_url,
             proxy_username=proxy_username,
             proxy_password=proxy_password,

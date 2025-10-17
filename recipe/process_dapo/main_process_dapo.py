@@ -22,7 +22,7 @@ import hydra
 import ray
 from omegaconf import OmegaConf
 
-from verl.trainer.ppo.reward import load_reward_manager
+from verl.trainer.ppo.reward import load_reward_manager, load_eval_reward_manager
 from verl.utils.device import is_cuda_available
 
 from .process_dapo_ray_trainer import RayProcessDAPOTrainer
@@ -147,16 +147,12 @@ class TaskRunner:
         )
 
         # Note that we always use function-based RM for validation
-        val_reward_fn = load_reward_manager(
+        val_reward_fn = load_eval_reward_manager(
             config,
             tokenizer,
             1,
             max_resp_len=config.data.max_response_length,
             overlong_buffer_cfg=config.reward_model.overlong_buffer,
-            llm_reward_cfg=config.custom_reward_function.llm_process_reward,
-            llm_critique_cfg=config.custom_reward_function.llm_process_critique,
-            reflection_cfg=config.custom_reward_function.reflection,
-            prm_cfg=config.custom_reward_function.process_reward_model,
         )
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 

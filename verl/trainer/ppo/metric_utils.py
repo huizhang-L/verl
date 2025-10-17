@@ -208,6 +208,10 @@ def compute_data_metrics_process_dapo(batch: DataProto, use_critic: bool = True)
     sequence_outcome_score = batch.non_tensor_batch["outcome_score"]
     sequence_process_score = batch.non_tensor_batch["process_score"]
 
+
+    sequence_outcome_score_arr = np.asarray(sequence_outcome_score).ravel()  # 统一为1D，兼容list/ndarray
+    sequence_process_score_arr = np.asarray(sequence_process_score).ravel()  # 统一为1D，兼容list/ndarray
+
     advantages = batch.batch["advantages"]
     returns = batch.batch["returns"]
 
@@ -233,17 +237,17 @@ def compute_data_metrics_process_dapo(batch: DataProto, use_critic: bool = True)
 
     metrics = {
         # overall_score
-        "critic/overall_score/mean": torch.mean(sequence_score).detach().item(),
-        "critic/overall_score/max": torch.max(sequence_score).detach().item(),
-        "critic/overall_score/min": torch.min(sequence_score).detach().item(),
+        "critic/rewards/mean": torch.mean(sequence_score).detach().item(),
+        "critic/rewards/max": torch.max(sequence_score).detach().item(),
+        "critic/rewards/min": torch.min(sequence_score).detach().item(),
         # outcome_score
-        "critic/outcome_score/mean": round(sum(sequence_outcome_score)/len(sequence_outcome_score), 4) if sequence_outcome_score else float("nan"),
-        "critic/outcome_score/max":  round(max(sequence_outcome_score), 4) if sequence_outcome_score else float("nan"),
-        "critic/outcome_score/min":  round(min(sequence_outcome_score), 4) if sequence_outcome_score else float("nan"),
+        "critic/score/mean": round(float(sequence_outcome_score_arr.mean()), 4) if sequence_outcome_score_arr.size else float("nan"),
+        "critic/score/max":  round(float(sequence_outcome_score_arr.max()),  4) if sequence_outcome_score_arr.size else float("nan"),
+        "critic/score/min":  round(float(sequence_outcome_score_arr.min()),  4) if sequence_outcome_score_arr.size else float("nan"),
         # process_score
-        "critic/process_score/mean": round(sum(sequence_process_score)/len(sequence_process_score), 4) if sequence_process_score else float("nan"),
-        "critic/process_score/max":  round(max(sequence_process_score), 4) if sequence_process_score else float("nan"),
-        "critic/process_score/min":  round(min(sequence_process_score), 4) if sequence_process_score else float("nan"),
+        "critic/process_score/mean": round(float(sequence_process_score_arr.mean()), 4) if sequence_process_score_arr.size else float("nan"),
+        "critic/process_score/max":  round(float(sequence_process_score_arr.max()),  4) if sequence_process_score_arr.size else float("nan"),
+        "critic/process_score/min":  round(float(sequence_process_score_arr.min()),  4) if sequence_process_score_arr.size else float("nan"),
         # reward
         # "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
         # "critic/rewards/max": torch.max(sequence_reward).detach().item(),

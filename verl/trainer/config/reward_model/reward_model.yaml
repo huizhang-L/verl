@@ -48,6 +48,7 @@ forward_max_token_len_per_gpu: ${critic.forward_max_token_len_per_gpu}
 # Default is naive. If all verification functions are multiprocessing-safe,
 # the reward manager can be set to prime for parallel verification.
 reward_manager: naive
+eval_reward_manager: naive
 
 # Whether to launch custom reward function asynchronously during log_prob
 # custom reward function executed async on CPU, during log_prob

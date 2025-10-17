@@ -319,15 +319,16 @@ class RJOBRunner:
         logger.info(f'[RJOB] Final status returned: {status}')
         logger.info(log_path)
         if log_path:
-            get_cmd = f'rjob logs job {task_name}'
-            get_result = subprocess.run(get_cmd,
-                                        shell=True,
-                                        text=True,
-                                        capture_output=True)
-            # logger.info(get_result)
-            output = get_result.stdout
+            # get_cmd = f'rjob logs job {task_name}'
+            # get_result = subprocess.run(get_cmd,
+            #                             shell=True,
+            #                             text=True,
+            #                             capture_output=True)
+            # # logger.info(get_result)
+            # output = get_result.stdout
             with open(log_path, 'w', encoding='utf-8') as f:
-                f.write(output + '\n')
+                # f.write(output + '\n' + status)
+                f.write(status)
         return status
 
     def _launch(self, task: TrainingTask, random_sleep: Optional[bool] = None):
@@ -391,7 +392,7 @@ class RJOBRunner:
         args.append(f'-e GROUP=llmfudan_gpu')
         args.append(f'--task-type=normal')
 
-        args.append(f'-e SWANLAB_MODE=offline')
+        args.append(f'-e WANDB_MODE=offline')
         args.append(f'-e HYDRA_FULL_ERROR=1')
 
         # Get launch command through task.get_command
