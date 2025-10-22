@@ -161,6 +161,8 @@ custom_reward_function:
     first_error: False
     enable_think: True
     presence_penalty: 1.5
+    # 当结果错误时，轨迹不分配过程奖励
+    enable_process_score_when_wrong: True
   
   reflection:
     enable: False
@@ -181,6 +183,10 @@ custom_reward_function:
     concurrency: 4
     coefficient: 0.5
 
+  repetition_penalty_cfg:
+    enable: False
+    coefficient: 0.5
+    
 # config for the algorithm
 algorithm:
 

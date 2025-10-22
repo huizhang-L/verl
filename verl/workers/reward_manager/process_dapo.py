@@ -1379,6 +1379,7 @@ class ProcessDAPORewardManager:
         llm_critique_cfg=None,
         reflection_cfg=None,
         prm_cfg=None,
+        repetition_penalty_cfg=None,
     ) -> None:
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
@@ -1390,6 +1391,7 @@ class ProcessDAPORewardManager:
         self.llm_critique_cfg = llm_critique_cfg
         self.reflection_cfg = reflection_cfg
         self.prm_cfg = prm_cfg
+        self.repetition_penalty_cfg = repetition_penalty_cfg
 
         if self.overlong_buffer_cfg is not None:
             assert self.max_resp_len is not None, (
@@ -1535,6 +1537,7 @@ class ProcessDAPORewardManager:
                 llm_reward_cfg=self.llm_reward_cfg,
                 prm_cfg=self.prm_cfg,
                 llm_critique_cfg=self.llm_critique_cfg,
+                repetition_penalty_cfg=self.repetition_penalty_cfg,
             )
 
             score: float

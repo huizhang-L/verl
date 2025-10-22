@@ -322,52 +322,6 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
         batch.non_tensor_batch[offset_mapping_info_key] = np.array(all_offset_mapping_info, dtype=object)
 
 
-    def _to_jsonable(self, x: Any):
-        """将任意常见科学计算对象转换为 JSON 可序列化类型（递归）。
-        规则：
-        - torch.Tensor: 标量->item()；否则->cpu().tolist()
-        - np.ndarray: tolist()
-        - np.generic: item()
-        - dict/list/tuple/set: 递归处理
-        - 其它非常见类型: 转成 str(x) 兜底
-        """
-        # torch tensor
-        if torch.is_tensor(x):
-            if x.numel() == 1:
-                return x.item()
-            return x.detach().cpu().tolist()
-
-        # numpy array / numpy scalar
-        if isinstance(x, np.ndarray):
-            # 注意 object 数组也能 tolist()，递归继续处理
-            return [self._to_jsonable(e) for e in x.tolist()]
-        if isinstance(x, np.generic):  # e.g. np.int64, np.float32
-            return x.item()
-
-        # 基本容器（递归）
-        if isinstance(x, dict):
-            return {k: self._to_jsonable(v) for k, v in x.items()}
-        if isinstance(x, (list, tuple)):
-            return [self._to_jsonable(e) for e in x]
-        if isinstance(x, set):
-            return [self._to_jsonable(e) for e in x]
-
-        # bytes/bytearray 可按需定制；这里用 str 兜底
-        if isinstance(x, (bytes, bytearray)):
-            # 你也可以选择 base64.b64encode(x).decode('ascii')
-            # 这里用可读性更好的 repr 形式
-            try:
-                return x.decode("utf-8")
-            except Exception:
-                return repr(x)
-
-        # 基本类型（int/float/bool/str/None）原样返回
-        if isinstance(x, (int, float, bool, str)) or x is None:
-            return x
-
-        # 其他非常见类型统一转成字符串避免崩溃
-        return str(x)
-
     def _dump_noneval_generations(self, batch, inputs, outputs, scores, advantages, reward_extra_infos_dict, dump_path, entropies=None, offset_mapping_info=None):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)

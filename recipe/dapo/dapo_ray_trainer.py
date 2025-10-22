@@ -18,7 +18,6 @@ This trainer supports model-agonistic model initialization with huggingface
 
 import uuid
 from collections import defaultdict
-from typing import Dict, Any, Tuple, List
 from copy import deepcopy
 from pprint import pprint
 import json
@@ -32,6 +31,7 @@ from verl import DataProto
 from verl.trainer.ppo.core_algos import agg_loss
 from verl.trainer.ppo.metric_utils import (
     compute_data_metrics,
+    compute_data_metrics_process_dapo,
     compute_throughout_metrics,
     compute_timing_metrics,
     reduce_metrics,
@@ -50,52 +50,6 @@ class RayDAPOTrainer(RayPPOTrainer):
     """
     Note that this trainer runs on the driver process on a single CPU/GPU node.
     """
-    def _to_jsonable(self, x: Any):
-        """将任意常见科学计算对象转换为 JSON 可序列化类型（递归）。
-        规则：
-        - torch.Tensor: 标量->item()；否则->cpu().tolist()
-        - np.ndarray: tolist()
-        - np.generic: item()
-        - dict/list/tuple/set: 递归处理
-        - 其它非常见类型: 转成 str(x) 兜底
-        """
-        # torch tensor
-        if torch.is_tensor(x):
-            if x.numel() == 1:
-                return x.item()
-            return x.detach().cpu().tolist()
-
-        # numpy array / numpy scalar
-        if isinstance(x, np.ndarray):
-            # 注意 object 数组也能 tolist()，递归继续处理
-            return [self._to_jsonable(e) for e in x.tolist()]
-        if isinstance(x, np.generic):  # e.g. np.int64, np.float32
-            return x.item()
-
-        # 基本容器（递归）
-        if isinstance(x, dict):
-            return {k: self._to_jsonable(v) for k, v in x.items()}
-        if isinstance(x, (list, tuple)):
-            return [self._to_jsonable(e) for e in x]
-        if isinstance(x, set):
-            return [self._to_jsonable(e) for e in x]
-
-        # bytes/bytearray 可按需定制；这里用 str 兜底
-        if isinstance(x, (bytes, bytearray)):
-            # 你也可以选择 base64.b64encode(x).decode('ascii')
-            # 这里用可读性更好的 repr 形式
-            try:
-                return x.decode("utf-8")
-            except Exception:
-                return repr(x)
-
-        # 基本类型（int/float/bool/str/None）原样返回
-        if isinstance(x, (int, float, bool, str)) or x is None:
-            return x
-
-        # 其他非常见类型统一转成字符串避免崩溃
-        return str(x)
-
     def _dump_noneval_generations(self, batch, inputs, outputs, scores, advantages, reward_extra_infos_dict, dump_path, entropies=None, offset_mapping_info=None):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
@@ -110,14 +64,14 @@ class RayDAPOTrainer(RayPPOTrainer):
         }
 
         # 如果传入了 token 级熵，确保与样本数一致后加入
-        if entropies is not None:
-            assert len(entropies) == n, f"len(entropies)={len(entropies)} != n={n}"
-            # 每个元素是一条样本对应的 list[float]
-            base_data["token_entropies"] = entropies
-        if advantages is not None:
-            assert len(advantages) == n, f"len(advantages)={len(advantages)} != n={n}"
-            # 每个元素是一条样本对应的 list[float]
-            base_data["advantages"] = advantages
+        # if entropies is not None:
+        #     assert len(entropies) == n, f"len(entropies)={len(entropies)} != n={n}"
+        #     # 每个元素是一条样本对应的 list[float]
+        #     base_data["token_entropies"] = entropies
+        # if advantages is not None:
+        #     assert len(advantages) == n, f"len(advantages)={len(advantages)} != n={n}"
+        #     # 每个元素是一条样本对应的 list[float]
+        #     base_data["advantages"] = advantages
         
         if offset_mapping_info is not None:
             assert len(offset_mapping_info) == n, f"len(offset_mapping_info)={len(offset_mapping_info)} != n={n}"
@@ -129,6 +83,8 @@ class RayDAPOTrainer(RayPPOTrainer):
         #     base_data["response_word_list"] = response_word_list
         # 合并额外信息（长度必须与 n 一致）
         for k, v in reward_extra_infos_dict.items():
+            if k in ["repetition_penalty_list", ""]:
+                continue
             v = batch.non_tensor_batch[k]
             if len(v) == n:
                 base_data[k] = v
@@ -303,7 +259,7 @@ class RayDAPOTrainer(RayPPOTrainer):
 
                         if reward_extra_infos_dict:
                             new_batch.non_tensor_batch.update(
-                                {k: np.array(v) for k, v in reward_extra_infos_dict.items()}
+                                {k: np.array(v, dtype=object) for k, v in reward_extra_infos_dict.items()}
                             )
 
                         # compute rewards. apply_kl_penalty if available
@@ -496,7 +452,7 @@ class RayDAPOTrainer(RayPPOTrainer):
                             self.rm_wg.stop_profile()
 
                 # collect metrics
-                metrics.update(compute_data_metrics(batch=batch, use_critic=self.use_critic))
+                metrics.update(compute_data_metrics_process_dapo(batch=batch, use_critic=self.use_critic))
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 # TODO: implement actual tflpo and theoretical tflpo
                 n_gpus = self.resource_pool_manager.get_n_gpus()

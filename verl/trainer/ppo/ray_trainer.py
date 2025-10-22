@@ -27,7 +27,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from pprint import pprint
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 import ray
@@ -604,6 +604,52 @@ class RayPPOTrainer:
         except Exception as e:
             print(f"Warning: Could not set total_training_steps in config. Structure missing? Error: {e}")
 
+    def _to_jsonable(self, x: Any):
+        """将任意常见科学计算对象转换为 JSON 可序列化类型（递归）。
+        规则：
+        - torch.Tensor: 标量->item()；否则->cpu().tolist()
+        - np.ndarray: tolist()
+        - np.generic: item()
+        - dict/list/tuple/set: 递归处理
+        - 其它非常见类型: 转成 str(x) 兜底
+        """
+        # torch tensor
+        if torch.is_tensor(x):
+            if x.numel() == 1:
+                return x.item()
+            return x.detach().cpu().tolist()
+
+        # numpy array / numpy scalar
+        if isinstance(x, np.ndarray):
+            # 注意 object 数组也能 tolist()，递归继续处理
+            return [self._to_jsonable(e) for e in x.tolist()]
+        if isinstance(x, np.generic):  # e.g. np.int64, np.float32
+            return x.item()
+
+        # 基本容器（递归）
+        if isinstance(x, dict):
+            return {k: self._to_jsonable(v) for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return [self._to_jsonable(e) for e in x]
+        if isinstance(x, set):
+            return [self._to_jsonable(e) for e in x]
+
+        # bytes/bytearray 可按需定制；这里用 str 兜底
+        if isinstance(x, (bytes, bytearray)):
+            # 你也可以选择 base64.b64encode(x).decode('ascii')
+            # 这里用可读性更好的 repr 形式
+            try:
+                return x.decode("utf-8")
+            except Exception:
+                return repr(x)
+
+        # 基本类型（int/float/bool/str/None）原样返回
+        if isinstance(x, (int, float, bool, str)) or x is None:
+            return x
+
+        # 其他非常见类型统一转成字符串避免崩溃
+        return str(x)
+
     def _dump_generations(self, inputs, outputs, scores, reward_extra_infos_dict, dump_path):
         """Dump rollout/validation samples as JSONL."""
         os.makedirs(dump_path, exist_ok=True)
@@ -621,10 +667,34 @@ class RayPPOTrainer:
             if len(v) == n:
                 base_data[k] = v
 
+        # 逐行写 JSONL
         lines = []
         for i in range(n):
-            entry = {k: v[i] for k, v in base_data.items()}
-            lines.append(json.dumps(entry, ensure_ascii=False))
+            # 按原逻辑取第 i 条
+            entry_raw = {k: v[i] for k, v in base_data.items()}
+
+            # 先尝试序列化（快速路径）
+            try:
+                entry = self._to_jsonable(entry_raw)
+                lines.append(json.dumps(entry, ensure_ascii=False))
+                continue
+            except Exception:
+                # 如果仍失败，逐字段定位并兜底
+                bad_keys = []
+                for k, val in entry_raw.items():
+                    try:
+                        json.dumps(self._to_jsonable({k: val}), ensure_ascii=False)
+                    except Exception:
+                        bad_keys.append((k, type(val)))
+                # 打印一下问题键，便于排查
+                if bad_keys:
+                    print(
+                        "[WARN] JSON serialization failed at keys: "
+                        + ", ".join(f"{k}({t.__name__})" for k, t in bad_keys)
+                    )
+                # 兜底：将整个 entry_raw 做转换再序列化
+                entry = self._to_jsonable(entry_raw)
+                lines.append(json.dumps(entry, ensure_ascii=False))
 
         with open(filename, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -656,6 +726,7 @@ class RayPPOTrainer:
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
     def _validate(self):
+        assert self.val_reward_fn.llm_critique_cfg.enable==False, "eval 流程，奖励设置错误"
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -745,6 +816,8 @@ class RayPPOTrainer:
             print(f"len reward_extra_infos_dict['reward']: {len(reward_extra_infos_dict['reward'])}")
             if "reward_extra_info" in result:
                 for key, lst in result["reward_extra_info"].items():
+                    if key == "repetition_penalty_list":
+                        continue
                     reward_extra_infos_dict[key].extend(lst)
                     print(f"len reward_extra_infos_dict['{key}']: {len(reward_extra_infos_dict[key])}")
 

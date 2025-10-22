@@ -1,0 +1,7 @@
+# 批量任务清单
+jobs:
+  - name: verl-dapo
+    bash_path: /mnt/shared-storage-user/lvhuijie/my_git_repo/verl/lhj_scripts/process_adv_4/octothinker_3b_long_zero/dapo_math/dapo.sh
+    nnodes: 1
+    n_gpus_per_node: 2
+    output_dir: /nvme/lvhuijie/mnt/ailab-llmfudan/checkpoints_verl/process_adv_4/octothinker_3b_long_zero/dapo_math/DAPO/verl-dapo

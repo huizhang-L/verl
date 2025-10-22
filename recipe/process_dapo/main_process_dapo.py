@@ -65,6 +65,20 @@ class TaskRunner:
 
         from verl.utils.fs import copy_to_local
         
+        resolved_dict = OmegaConf.to_container(config, resolve=True)  # 导出已解析的纯 dict
+        config_eval = OmegaConf.create(resolved_dict)                  # 再包回 DictConfig
+
+        # 如需修改且开启了 struct，可这样改：
+        # with OmegaConf.open_dict(config_eval):
+        config_eval.reward_model.reward_manager="process_dapo"
+        config_eval.custom_reward_function.path="/mnt/shared-storage-user/lvhuijie/my_git_repo/verl/verl/utils/reward_score/dapo_score_with_process_metrics.py"
+        config_eval.custom_reward_function.llm_process_critique.enable=False
+        config_eval.custom_reward_function.llm_process_critique.enable_process_score_when_wrong=True
+        config_eval.custom_reward_function.process_reward_model.enable=False
+        config_eval.custom_reward_function.reflection.enable=False
+        config_eval.custom_reward_function.llm_process_reward.enable=False
+        config_eval.custom_reward_function.repetition_penalty_cfg.enable=False
+        
         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
 
         pprint(OmegaConf.to_container(config, resolve=True))  # resolve=True will eval symbol values
@@ -144,15 +158,21 @@ class TaskRunner:
             llm_critique_cfg=config.custom_reward_function.llm_process_critique,
             reflection_cfg=config.custom_reward_function.reflection,
             prm_cfg=config.custom_reward_function.process_reward_model,
+            repetition_penalty_cfg=config.custom_reward_function.repetition_penalty_cfg,
         )
 
         # Note that we always use function-based RM for validation
-        val_reward_fn = load_eval_reward_manager(
-            config,
+        val_reward_fn = load_reward_manager(
+            config_eval,
             tokenizer,
             1,
-            max_resp_len=config.data.max_response_length,
-            overlong_buffer_cfg=config.reward_model.overlong_buffer,
+            max_resp_len=config_eval.data.max_response_length,
+            overlong_buffer_cfg=config_eval.reward_model.overlong_buffer,
+            llm_reward_cfg=config_eval.custom_reward_function.llm_process_reward,
+            llm_critique_cfg=config_eval.custom_reward_function.llm_process_critique,
+            reflection_cfg=config_eval.custom_reward_function.reflection,
+            prm_cfg=config_eval.custom_reward_function.process_reward_model,
+            repetition_penalty_cfg=config_eval.custom_reward_function.repetition_penalty_cfg,
         )
         resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 

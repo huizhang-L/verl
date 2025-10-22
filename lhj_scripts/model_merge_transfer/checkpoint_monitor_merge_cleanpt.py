@@ -294,8 +294,5 @@ def main():
 if __name__ == "__main__":
     raise SystemExit(main())
 
-    # python /mnt/shared-storage-user/lvhuijie/my_git_repo/verl/lhj_scripts/model_merge_transfer/checkpoint_monitor_merge_cleanpt.py \
-    # --source-root /mnt/ailab-llmfudan/lvhuijie/checkpoints_verl \
-    # --interval 1200 \
-    # --dry-run
+
     # python lhj_scripts/model_merge_transfer/checkpoint_monitor_merge_cleanpt.py --source-root /mnt/ailab-llmfudan/lvhuijie/checkpoints_verl --interval 1200 --state-file /mnt/shared-storage-user/lvhuijie/my_git_repo/verl/lhj_scripts/model_merge_transfer/ckpt_merge_state.json --dry-run
