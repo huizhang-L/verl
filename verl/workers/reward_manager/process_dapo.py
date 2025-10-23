@@ -219,13 +219,13 @@ class UniversalAIClient:
         base_url: str | List[str],
         api_key: str | List[str],
         model: str | List[str],
+        use_proxy: Optional[bool | List[bool]] = None,
         timeout: float = 600.0,
         extra_headers: Optional[Dict[str, str]] = None,
         force_chat: bool = True,
         model_type: ModelType = "chat",
         reward_reducer: ReducerName = "mean",
         dot_ref: Optional[List[float]] = None,  # reducer='dot' 时需要
-        use_proxy: Optional[bool | List[bool]] = None,
         proxy_url: Optional[str] = None,
         proxy_username: Optional[str] = None,
         proxy_password: Optional[str] = None,
@@ -267,8 +267,8 @@ class UniversalAIClient:
         self.proxy_password = proxy_password
         self.client = []
         self.async_client = []
-        for idx, (ak, bu) in enumerate(zip(self.api_key, self.base_url)):
-            if self.use_proxy[idx]:
+        for ak, bu, up in zip(self.api_key, self.base_url, self.use_proxy):
+            if up:
                 self.client.append(requests.post(urljoin(self.proxy_url, "create"),
                     json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
                     auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json())
@@ -1419,7 +1419,7 @@ class ProcessDAPORewardManager:
         base_url = os.getenv("LLM_AS_A_JUDGE_SERVICE_URL")
         api_key = os.getenv("LLM_AS_A_JUDGE_SERVICE_API_KEY")
         model_name = os.getenv("LLM_AS_A_JUDGE_SERVICE_MODEL")
-        use_proxy = os.getenv("LLM_AS_A_JUDGE_USE_PROXY")
+        use_proxy = os.getenv("LLM_AS_A_JUDGE_SERVICE_USE_PROXY")
         proxy_url = os.getenv("LLM_AS_A_JUDGE_PROXY_URL")
         proxy_username = os.getenv("LLM_AS_A_JUDGE_PROXY_USERNAME")
         proxy_password = os.getenv("LLM_AS_A_JUDGE_PROXY_PASSWORD")
@@ -1428,9 +1428,9 @@ class ProcessDAPORewardManager:
             base_url=base_url.split(","),
             api_key=api_key.split(","),
             model=model_name.split(","),
+            use_proxy=[True if up == str(True) else False for up in use_proxy.split(",")],
             model_type="chat",
             force_chat=True,
-            use_proxy=[True if up == str(True) else False for up in use_proxy.split(",")],
             proxy_url=proxy_url,
             proxy_username=proxy_username,
             proxy_password=proxy_password,
