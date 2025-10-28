@@ -853,6 +853,8 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                             reward_tensor = self.reward_fn(new_batch)
                             reward_extra_infos_dict = {}
 
+                        metrics.update(reward_extra_infos_dict.get("timing_raw", {}))
+
                         # 综合考虑 outcome 和 process reward 之后的
                         new_batch.batch["token_level_scores"] = reward_tensor
 

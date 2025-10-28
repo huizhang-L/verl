@@ -71,7 +71,7 @@ class TaskRunner:
         # 如需修改且开启了 struct，可这样改：
         # with OmegaConf.open_dict(config_eval):
         config_eval.reward_model.reward_manager="process_dapo"
-        config_eval.custom_reward_function.path="/mnt/shared-storage-user/lvhuijie/my_git_repo/verl/verl/utils/reward_score/dapo_score_with_process_metrics.py"
+        config_eval.custom_reward_function.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/verl/utils/reward_score/dapo_score_with_process_metrics.py"
         config_eval.custom_reward_function.llm_process_critique.enable=False
         config_eval.custom_reward_function.llm_process_critique.enable_process_score_when_wrong=True
         config_eval.custom_reward_function.process_reward_model.enable=False

@@ -12,13 +12,25 @@ class Proxy:
         return len(self.clients) - 1
 
     def responses_create(self, args):
-        return self.clients[args["idx"]].responses.create(**args["args"]).output_text
+        try:
+            return self.clients[args["idx"]].responses.create(**args["args"]).output_text
+        except Exception as e:
+            print(e)
+            return ""
 
     def chat_completions_create(self, args):
-        return self.clients[args["idx"]].chat.completions.create(**args["args"]).choices[0].message.content
+        try:
+            return self.clients[args["idx"]].chat.completions.create(**args["args"]).choices[0].message.content
+        except Exception as e:
+            print(e)
+            return ""
 
     def embeddings_create(self, args):
-        return list(self.clients[args["idx"]].embeddings.create(**args["args"]).data[0].embedding)
+        try:
+            return list(self.clients[args["idx"]].embeddings.create(**args["args"]).data[0].embedding)
+        except Exception as e:
+            print(e)
+            return []
 
 proxy = Proxy()
 
@@ -47,13 +59,25 @@ class AsyncProxy:
         return len(self.clients) - 1
 
     def responses_create(self, args):
-        return self.clients[args["idx"]].responses.create(**args["args"]).output_text
+        try:
+            return self.clients[args["idx"]].responses.create(**args["args"]).output_text
+        except Exception as e:
+            print(e)
+            return ""
 
     def chat_completions_create(self, args):
-        return self.clients[args["idx"]].chat.completions.create(**args["args"]).choices[0].message.content
+        try:
+            return self.clients[args["idx"]].chat.completions.create(**args["args"]).choices[0].message.content
+        except Exception as e:
+            print(e)
+            return ""
 
     def embeddings_create(self, args):
-        return list(self.clients[args["idx"]].embeddings.create(**args["args"]).data[0].embedding)
+        try:
+            return list(self.clients[args["idx"]].embeddings.create(**args["args"]).data[0].embedding)
+        except Exception as e:
+            print(e)
+            return []
 
 async_proxy = AsyncProxy()
 

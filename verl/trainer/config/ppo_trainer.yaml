@@ -186,6 +186,8 @@ custom_reward_function:
   repetition_penalty_cfg:
     enable: False
     coefficient: 0.5
+    intra_threshold: 5
+    inter_threshold: 5
     
 # config for the algorithm
 algorithm:

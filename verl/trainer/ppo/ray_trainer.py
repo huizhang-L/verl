@@ -726,7 +726,7 @@ class RayPPOTrainer:
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
     def _validate(self):
-        assert self.val_reward_fn.llm_critique_cfg.enable==False, "eval 流程，奖励设置错误"
+        # assert self.val_reward_fn.llm_critique_cfg.enable==False, "eval 流程，奖励设置错误"
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 

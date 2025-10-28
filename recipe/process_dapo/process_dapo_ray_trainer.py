@@ -807,6 +807,10 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                             reward_tensor = self.reward_fn(new_batch)
                             reward_extra_infos_dict = {}
 
+                        if reward_extra_infos_dict.get("timing_raw", None):
+                            metrics.update(reward_extra_infos_dict["timing_raw"])
+                            del reward_extra_infos_dict["timing_raw"]
+
                         # 综合考虑 outcome 和 process reward 之后的
                         new_batch.batch["token_level_scores"] = reward_tensor
 
@@ -1163,6 +1167,10 @@ class RayProcessDAPOTrainer(RayPPOTrainer):
                                         print(f"Error in reward_fn: {e}")
                                         err_reward_tensor = self.reward_fn(new_err_batch)
                                         err_reward_extra_infos_dict = {}
+
+                                    if reward_extra_infos_dict.get("timing_raw", None):
+                                        metrics.update({f"err_{k}": v for k, v in reward_extra_infos_dict["timing_raw"]})
+                                        del reward_extra_infos_dict["timing_raw"]
 
                                     new_err_batch.batch["token_level_scores"] = err_reward_tensor
 

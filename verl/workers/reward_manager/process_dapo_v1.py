@@ -31,8 +31,6 @@ from urllib.parse import urljoin
 
 import threading
 
-from verl.utils.profiler import marked_timer
-
 
 PROCESS_SCORE_TEMPLATE = """ROLE
 You are RedundancyStepDetector. Your ONLY job is to determine whether a given math solution (full or fragment) contains ANY redundant step(s).
@@ -265,17 +263,18 @@ class UniversalAIClient:
         self.model = model
         self.use_proxy = use_proxy
         self.proxy_url = proxy_url
-        self.proxy_auth = requests.auth.HTTPBasicAuth(proxy_username, proxy_password)
+        self.proxy_username = proxy_username
+        self.proxy_password = proxy_password
         self.client = []
         self.async_client = []
         for ak, bu, up in zip(self.api_key, self.base_url, self.use_proxy):
             if up:
                 self.client.append(requests.post(urljoin(self.proxy_url, "create"),
                     json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
-                    auth=self.proxy_auth).json())
+                    auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json())
                 self.async_client.append(requests.post(urljoin(self.proxy_url, "async_create"),
                     json={"args": dict(api_key=ak, base_url=bu, timeout=timeout, default_headers=extra_headers or {},)},
-                    auth=self.proxy_auth).json())
+                    auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json())
             else:
                 self.client.append(OpenAI(
                     api_key=ak,
@@ -306,7 +305,7 @@ class UniversalAIClient:
     # 工具：将 messages 线性化为纯文本（用于 Responses API 的 input 兜底）
     # ---------------------------
     @staticmethod
-    def _messages_to_text(messages: List[Dict[str, str]]):
+    def _messages_to_text(messages: List[Dict[str, str]]) -> str:
         lines = []
         for m in messages:
             role = m.get("role", "user")
@@ -321,7 +320,7 @@ class UniversalAIClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
-    ):
+    ) -> str:
         if self.model_type != "chat":
             raise RuntimeError("respond_text only valid when model_type='chat'")
 
@@ -330,55 +329,39 @@ class UniversalAIClient:
         if not self.force_chat:
             if self.use_proxy[client_idx]:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_remote", timing_raw):
-                        try:
-                            ret = requests.post(urljoin(self.proxy_url, "responses_create"),
-                                json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
-                                auth=self.proxy_auth).json()
-                        except:
-                            ret = ""
-                    return ret, timing_raw
+                    return requests.post(urljoin(self.proxy_url, "responses_create"),
+                        json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
+                        auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
                 except Exception:
                     pass
             else:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_local", timing_raw):
-                        resp = self.client[client_idx].responses.create(
-                            model=self.model[client_idx],
-                            input=text,
-                            temperature=temperature,
-                            max_output_tokens=max_tokens,
-                            **kwargs,
-                        )
+                    resp = self.client[client_idx].responses.create(
+                        model=self.model[client_idx],
+                        input=text,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        **kwargs,
+                    )
                     if hasattr(resp, "output_text"):
-                        return resp.output_text, timing_raw
-                    return "".join(getattr(p, "text", "") for p in getattr(resp, "output", [])), timing_raw
+                        return resp.output_text
+                    return "".join(getattr(p, "text", "") for p in getattr(resp, "output", []))
                 except Exception:
                     pass
 
         if self.use_proxy[client_idx]:
-            timing_raw = {}
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    ret = requests.post(urljoin(self.proxy_url, "chat_completions_create"),
-                        json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    ret = ""
-            return ret, timing_raw
+            return requests.post(urljoin(self.proxy_url, "chat_completions_create"),
+                json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            timing_raw = {}
-            with marked_timer("timing_s/api_local", timing_raw):
-                chat = self.client[client_idx].chat.completions.create(
-                    model=self.model[client_idx],
-                    messages=[{"role": "user", "content": text}],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs,
-                )
-            return chat.choices[0].message.content, timing_raw
+            chat = self.client[client_idx].chat.completions.create(
+                model=self.model[client_idx],
+                messages=[{"role": "user", "content": text}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return chat.choices[0].message.content
 
     def respond_messages(
         self,
@@ -386,7 +369,7 @@ class UniversalAIClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
-    ):
+    ) -> str:
         if self.model_type != "chat":
             raise RuntimeError("respond_messages only valid when model_type='chat'")
 
@@ -396,53 +379,37 @@ class UniversalAIClient:
             text = self._messages_to_text(messages)
             if self.use_proxy[client_idx]:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_remote", timing_raw):
-                        try:
-                            ret = requests.post(urljoin(self.proxy_url, "responses_create"),
-                                json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
-                                auth=self.proxy_auth).json()
-                        except:
-                            ret = ""
-                    return ret, timing_raw
+                    return requests.post(urljoin(self.proxy_url, "responses_create"),
+                        json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
+                        auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
                 except Exception:
                     pass
             else:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_local", timing_raw):
-                        resp = self.client[client_idx].responses.create(
-                            model=self.model[client_idx],
-                            input=text,
-                            temperature=temperature,
-                            max_output_tokens=max_tokens,
-                            **kwargs,
-                        )
-                    return getattr(resp, "output_text", ""), timing_raw
+                    resp = self.client[client_idx].responses.create(
+                        model=self.model[client_idx],
+                        input=text,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        **kwargs,
+                    )
+                    return getattr(resp, "output_text", "")
                 except Exception:
                     pass
         
         if self.use_proxy[client_idx]:
-            timing_raw = {}
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    ret = requests.post(urljoin(self.proxy_url, "chat_completions_create"),
-                        json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    ret = ""
-            return ret, timing_raw
+            return requests.post(urljoin(self.proxy_url, "chat_completions_create"),
+                json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            timing_raw = {}
-            with marked_timer("timing_s/api_local", timing_raw):
-                chat = self.client[client_idx].chat.completions.create(
-                    model=self.model[client_idx],
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs,
-                )
-            return chat.choices[0].message.content, timing_raw
+            chat = self.client[client_idx].chat.completions.create(
+                model=self.model[client_idx],
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return chat.choices[0].message.content
 
     async def a_respond_text(
         self,
@@ -450,7 +417,7 @@ class UniversalAIClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
-    ):
+    ) -> str:
         if self.model_type != "chat":
             raise RuntimeError("a_respond_text only valid when model_type='chat'")
 
@@ -459,53 +426,37 @@ class UniversalAIClient:
         if not self.force_chat:
             if self.use_proxy[client_idx]:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_remote", timing_raw):
-                        try:
-                            ret = await requests.post(urljoin(self.proxy_url, "async_responses_create"),
-                                json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
-                                auth=self.proxy_auth).json()
-                        except:
-                            ret = ""
-                    return ret, timing_raw
+                    return await requests.post(urljoin(self.proxy_url, "async_responses_create"),
+                        json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
+                        auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
                 except Exception:
                     pass
             else:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_local", timing_raw):
-                        resp = await self.async_client[client_idx].responses.create(
-                            model=self.model[client_idx],
-                            input=text,
-                            temperature=temperature,
-                            max_output_tokens=max_tokens,
-                            **kwargs,
-                        )
-                    return getattr(resp, "output_text", ""), timing_raw
+                    resp = await self.async_client[client_idx].responses.create(
+                        model=self.model[client_idx],
+                        input=text,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        **kwargs,
+                    )
+                    return getattr(resp, "output_text", "")
                 except Exception:
                     pass
 
         if self.use_proxy[client_idx]:
-            timing_raw = {}
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    ret = await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
-                        json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    ret = ""
-            return ret, timing_raw
+            return await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
+                json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=[{"role": "user", "content": text}], temperature=temperature, max_tokens=max_tokens, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            timing_raw = {}
-            with marked_timer("timing_s/api_local", timing_raw):
-                chat = await self.async_client[client_idx].chat.completions.create(
-                    model=self.model[client_idx],
-                    messages=[{"role": "user", "content": text}],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs,
-                )
-            return chat.choices[0].message.content, timing_raw
+            chat = await self.async_client[client_idx].chat.completions.create(
+                model=self.model[client_idx],
+                messages=[{"role": "user", "content": text}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return chat.choices[0].message.content
 
     async def a_respond_messages(
         self,
@@ -513,7 +464,7 @@ class UniversalAIClient:
         temperature: float = 0.7,
         max_tokens: int = 1024,
         **kwargs: Any,
-    ):
+    ) -> str:
         if self.model_type != "chat":
             raise RuntimeError("a_respond_messages only valid when model_type='chat'")
 
@@ -523,53 +474,37 @@ class UniversalAIClient:
             text = self._messages_to_text(messages)
             if self.use_proxy[client_idx]:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_remote", timing_raw):
-                        try:
-                            ret = await requests.post(urljoin(self.proxy_url, "async_responses_create"),
-                                json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
-                                auth=self.proxy_auth).json()
-                        except:
-                            ret = ""
-                    return ret, timing_raw
+                    return await requests.post(urljoin(self.proxy_url, "async_responses_create"),
+                        json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, temperature=temperature, max_output_tokens=max_tokens, **kwargs,)},
+                        auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
                 except Exception:
                     pass
             else:
                 try:
-                    timing_raw = {}
-                    with marked_timer("timing_s/api_local", timing_raw):
-                        resp = await self.async_client[client_idx].responses.create(
-                            model=self.model[client_idx],
-                            input=text,
-                            temperature=temperature,
-                            max_output_tokens=max_tokens,
-                            **kwargs,
-                        )
-                    return getattr(resp, "output_text", ""), timing_raw
+                    resp = await self.async_client[client_idx].responses.create(
+                        model=self.model[client_idx],
+                        input=text,
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                        **kwargs,
+                    )
+                    return getattr(resp, "output_text", "")
                 except Exception:
                     pass
 
         if self.use_proxy[client_idx]:
-            timing_raw = {}
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    ret = await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
-                        json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    ret = ""
-            return ret, timing_raw
+            return await requests.post(urljoin(self.proxy_url, "async_chat_completions_create"),
+                json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], messages=messages, temperature=temperature, max_tokens=max_tokens, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            timing_raw = {}
-            with marked_timer("timing_s/api_local", timing_raw):
-                chat = await self.async_client[client_idx].chat.completions.create(
-                    model=self.model[client_idx],
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    **kwargs,
-                )
-            return chat.choices[0].message.content, timing_raw
+            chat = await self.async_client[client_idx].chat.completions.create(
+                model=self.model[client_idx],
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+            return chat.choices[0].message.content
 
     async def a_batch_messages(
         self,
@@ -578,7 +513,7 @@ class UniversalAIClient:
         max_tokens: int = 1024,
         concurrency: int = 8,
         **kwargs: Any,
-    ):
+    ) -> List[str]:
         if self.model_type != "chat":
             raise RuntimeError("a_batch_messages only valid when model_type='chat'")
 
@@ -600,7 +535,7 @@ class UniversalAIClient:
         max_tokens: int = 1024,
         concurrency: int = 8,
         **kwargs: Any,
-    ):
+    ) -> List[str]:
         if self.model_type != "chat":
             raise RuntimeError("batch_messages only valid when model_type='chat'")
 
@@ -627,7 +562,7 @@ class UniversalAIClient:
         max_tokens: int = 1024,
         concurrency: int = 1,
         **kwargs: Any,
-    ):
+    ) -> Union[str, List[str]]:
         if self.model_type != "chat":
             raise RuntimeError("messages_auto only valid when model_type='chat'")
 
@@ -662,29 +597,23 @@ class UniversalAIClient:
         reward_reducer: Optional[ReducerName] = None,
         dot_ref: Optional[List[float]] = None,
         **kwargs: Any,
-    ):
+    ) -> Union[float, List[float]]:
         """同步：对单条文本做嵌入；默认约简为奖励标量返回。"""
         if self.model_type != "embedding":
             raise RuntimeError("embed_one only valid when model_type='embedding'")
 
         client_idx = self.get_client()
-        timing_raw = {}
 
         if self.use_proxy[client_idx]:
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    vec = requests.post(urljoin(self.proxy_url, "embeddings"),
-                        json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    vec = []
+            vec = requests.post(urljoin(self.proxy_url, "embeddings"),
+                json={"idx": self.client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            with marked_timer("timing_s/api_local", timing_raw):
-                resp = self.client[client_idx].embeddings.create(
-                    model=self.model[client_idx],
-                    input=text,
-                    **kwargs,
-                )
+            resp = self.client[client_idx].embeddings.create(
+                model=self.model[client_idx],
+                input=text,
+                **kwargs,
+            )
             vec = list(resp.data[0].embedding)
         # vec = resp.data[0].embedding
         # 2) 还原成 [T, 2]（logits）
@@ -696,8 +625,8 @@ class UniversalAIClient:
         # logits = logits.unsqueeze(0)     # [1, T, 2] 方便后续与 mask 对齐
         if as_reward:
             reducer = reward_reducer or self.reward_reducer
-            return _reduce_embedding_to_reward(vec, reducer, dot_ref or self.dot_ref), timing_raw
-        return vec, timing_raw
+            return _reduce_embedding_to_reward(vec, reducer, dot_ref or self.dot_ref)
+        return vec
 
     def embed_batch(
         self,
@@ -707,7 +636,7 @@ class UniversalAIClient:
         dot_ref: Optional[List[float]] = None,
         concurrency: int = 8,
         **kwargs: Any,
-    ):
+    ) -> Union[List[float], List[List[float]]]:
         """同步批量：内部起事件循环并发调用。"""
         if self.model_type != "embedding":
             raise RuntimeError("embed_batch only valid when model_type='embedding'")
@@ -733,34 +662,28 @@ class UniversalAIClient:
         reward_reducer: Optional[ReducerName] = None,
         dot_ref: Optional[List[float]] = None,
         **kwargs: Any,
-    ):
+    ) -> Union[float, List[float]]:
         """异步：单条嵌入；默认返回标量奖励。"""
         if self.model_type != "embedding":
             raise RuntimeError("a_embed_one only valid when model_type='embedding'")
 
         client_idx = self.get_client()
-        timing_raw = {}
 
         if self.use_proxy[client_idx]:
-            with marked_timer("timing_s/api_remote", timing_raw):
-                try:
-                    vec = await requests.post(urljoin(self.proxy_url, "async_embeddings"),
-                        json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
-                        auth=self.proxy_auth).json()
-                except:
-                    vec = []
+            vec = await requests.post(urljoin(self.proxy_url, "async_embeddings"),
+                json={"idx": self.async_client[client_idx], "args": dict(model=self.model[client_idx], input=text, **kwargs,)},
+                auth=requests.auth.HTTPBasicAuth(self.proxy_username, self.proxy_password)).json()
         else:
-            with marked_timer("timing_s/api_local", timing_raw):
-                resp = await self.async_client[client_idx].embeddings.create(
-                    model=self.model[client_idx],
-                    input=text,
-                    **kwargs,
-                )
+            resp = await self.async_client[client_idx].embeddings.create(
+                model=self.model[client_idx],
+                input=text,
+                **kwargs,
+            )
             vec = list(resp.data[0].embedding)
         if as_reward:
             reducer = reward_reducer or self.reward_reducer
-            return _reduce_embedding_to_reward(vec, reducer, dot_ref or self.dot_ref), timing_raw
-        return vec, timing_raw
+            return _reduce_embedding_to_reward(vec, reducer, dot_ref or self.dot_ref)
+        return vec
 
     async def a_embed_batch(
         self,
@@ -770,7 +693,7 @@ class UniversalAIClient:
         dot_ref: Optional[List[float]] = None,
         concurrency: int = 8,
         **kwargs: Any,
-    ):
+    ) -> Union[List[float], List[List[float]]]:
         """异步批量：并发获取嵌入；默认返回标量奖励列表。"""
         if self.model_type != "embedding":
             raise RuntimeError("a_embed_batch only valid when model_type='embedding'")
@@ -798,7 +721,7 @@ class UniversalAIClient:
         dot_ref: Optional[List[float]] = None,
         concurrency: int = 1,
         **kwargs: Any,
-    ):
+    ) -> Union[float, List[float], List[List[float]]]:
         """自动：单条字符串 -> 标量/向量；列表 -> 批量（可并发）。"""
         if self.model_type != "embedding":
             raise RuntimeError("embeddings_auto only valid when model_type='embedding'")
@@ -1064,19 +987,10 @@ def llm_process_scores_for_batch_items_with_universal_client(
     req_kwargs = dict(temperature=temperature, max_tokens=max_tokens, concurrency=concurrency)
     req_kwargs.update(request_extra)
 
-    outputs = client.auto(flat_messages, **req_kwargs)
-    if isinstance(outputs, tuple):
+    judge_outputs = client.auto(flat_messages, **req_kwargs)
+    if isinstance(judge_outputs, str):
         # 理论上不会发生（因为传的是 batch），但稳妥起见做个兜底
-        outputs = [outputs]
-
-    judge_outputs = []
-    timing_raw = {}
-    for item in outputs:
-        judge_outputs.append(item[0])
-        for k, v in item[1].items():
-            if k not in timing_raw:
-                timing_raw[k] = 0
-            timing_raw[k] += v
+        judge_outputs = [judge_outputs]
 
 
     # 解析每段输出为 0/1
@@ -1092,8 +1006,6 @@ def llm_process_scores_for_batch_items_with_universal_client(
     for i, item in enumerate(batch_items):
         item["process_scores_raw"] = per_item_raw.get(i, [])
         item["process_scores"]     = per_item_bin.get(i, [])
-
-    return timing_raw
 
 def generate_proccess_critique_data(prompt_str: str,
                                     response_str: str,
@@ -1293,17 +1205,9 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
     # 批量请求
     req_kwargs = dict(temperature=temperature, max_tokens=max_tokens, concurrency=concurrency)
     req_kwargs.update(request_extra)
-    outputs = client.auto(flat_messages, **req_kwargs)
-    if isinstance(outputs, tuple):  # 理论上不会（因为 batch），但容错
-        outputs = [outputs]
-    judge_outputs = []
-    timing_raw = {}
-    for item in outputs:
-        judge_outputs.append(item[0])
-        for k, v in item[1].items():
-            if k not in timing_raw:
-                timing_raw[k] = 0
-            timing_raw[k] += v
+    judge_outputs = client.auto(flat_messages, **req_kwargs)
+    if isinstance(judge_outputs, str):  # 理论上不会（因为 batch），但容错
+        judge_outputs = [judge_outputs]
         # 将原始输出回填到每个样本
     per_item_raw: Dict[int, List[str]] = defaultdict(list)
     for (i, _j), raw in zip(mapping, judge_outputs):
@@ -1377,8 +1281,6 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
 
         item["process_step_critique"] = step_scores
 
-    return timing_raw
-
 def get_reflection(client,
                    process_step_critique,
                    process_critique_raw,
@@ -1444,7 +1346,7 @@ def get_reflection(client,
     message = [{"role": "user", "content": content}]
     req_kwargs = dict(temperature=temperature, max_tokens=max_tokens, concurrency=concurrency)
     req_kwargs.update(request_extra)
-    judge_outputs, timing_raw = client.auto(message, **req_kwargs)
+    judge_outputs = client.auto(message, **req_kwargs)
 
     close_markers = ["</think>"]
     cut_pos = -1
@@ -1459,7 +1361,7 @@ def get_reflection(client,
     if cut_pos == -1:
         judge_outputs = ""
 
-    return judge_outputs.replace("\n\n", "\n").strip() + "\n\n", timing_raw
+    return judge_outputs.replace("\n\n", "\n").strip() + "\n\n"
 
 @register("process_dapo")
 class ProcessDAPORewardManager:
@@ -1578,10 +1480,8 @@ class ProcessDAPORewardManager:
                 "extra_info": extra_info,
             })
 
-        reward_extra_info['timing_raw'] = {}
-
         if self.llm_reward_cfg.enable == True:
-            timing_raw = llm_process_scores_for_batch_items_with_universal_client(
+            llm_process_scores_for_batch_items_with_universal_client(
                 batch_items,
                 client=client,  # 你在 __call__ 开头 _ensure_client() 拿到的 UniversalAIClient 实例
                 split_step_num=self.llm_reward_cfg.split_step_num,
@@ -1589,15 +1489,11 @@ class ProcessDAPORewardManager:
                 max_tokens=self.llm_reward_cfg.max_tokens,
                 concurrency=self.llm_reward_cfg.concurrency,
             )
-            for k, v in timing_raw.items():
-                if k not in reward_extra_info['timing_raw']:
-                    reward_extra_info['timing_raw'][k] = 0
-                reward_extra_info['timing_raw'][k] += v
         
         if self.llm_critique_cfg.enable == True:
             extra_body={"chat_template_kwargs": {"enable_thinking": self.llm_critique_cfg.enable_think}, "presence_penalty": self.llm_critique_cfg.presence_penalty}
             request_extra = {"extra_body": extra_body}
-            timing_raw = llm_process_critique_steppos_for_batch_items_with_universal_client(
+            llm_process_critique_steppos_for_batch_items_with_universal_client(
                 batch_items,
                 client=client,  # 你在 __call__ 开头 _ensure_client() 拿到的 UniversalAIClient 实例
                 split_step_num=self.llm_critique_cfg.split_step_num,
@@ -1606,10 +1502,6 @@ class ProcessDAPORewardManager:
                 concurrency=self.llm_critique_cfg.concurrency,
                 request_extra=request_extra,
             )
-            for k, v in timing_raw.items():
-                if k not in reward_extra_info['timing_raw']:
-                    reward_extra_info['timing_raw'][k] = 0
-                reward_extra_info['timing_raw'][k] += v
 
         # 3) 再逐个样本 compute_score（把 process_scores 通过 extra_info 传入）
         for i in range(len(batch_items)):
@@ -1677,18 +1569,13 @@ class ProcessDAPORewardManager:
                         reward_extra_info["next_step"].append(1)
                         extra_body={"chat_template_kwargs": {"enable_thinking": self.reflection_cfg.enable_think},  "presence_penalty": self.reflection_cfg.presence_penalty}
                         request_extra = {"extra_body": extra_body}
-                        reflection, timing_raw = get_reflection(client,
-                                                                item.get("process_step_critique", []),
-                                                                item.get("process_critique_raw", []),
-                                                                self.reflection_cfg.temperature,
-                                                                self.reflection_cfg.max_tokens,
-                                                                self.reflection_cfg.concurrency,
-                                                                request_extra=request_extra)
-                        reward_extra_info["reflection"].append(reflection)
-                        for k, v in timing_raw.items():
-                            if k not in reward_extra_info['timing_raw']:
-                                reward_extra_info['timing_raw'][k] = 0
-                            reward_extra_info['timing_raw'][k] += v
+                        reward_extra_info["reflection"].append(get_reflection(client,
+                                                                              item.get("process_step_critique", []),
+                                                                              item.get("process_critique_raw", []),
+                                                                              self.reflection_cfg.temperature,
+                                                                              self.reflection_cfg.max_tokens,
+                                                                              self.reflection_cfg.concurrency,
+                                                                              request_extra=request_extra))
                     else:
                         reward_extra_info["next_step"].append(0)
                         reward_extra_info["reflection"].append("")
