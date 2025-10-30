@@ -34,40 +34,95 @@ import threading
 from verl.utils.profiler import marked_timer
 
 
-PROCESS_SCORE_TEMPLATE = """\
-Your task is to determine whether the given mathematical solution (which may be partial or complete) contains redundancy, such as repeated attempts with the same idea or re - solving an already concluded problem.
-First, please carefully read the following mathematical solution:
-<solution>
-{SOLUTION}
-</solution>
-When evaluating the solution, consider the following criteria for redundancy:
-1. Repeated attempts with the same line of thought without progress.
-2. Re - solving a problem after a valid conclusion has been reached.
-3. Unnecessary repetition of calculations or steps.
+PROCESS_SCORE_TEMPLATE = """ROLE
+You are RedundancyStepDetector. Your ONLY job is to determine whether a given math solution (full or fragment) contains ANY redundant step(s).
 
-Please follow these steps for evaluation:
-1. Thoroughly read the entire solution.
-2. Compare the solution content with the above redundancy criteria one by one.
-3. Consider the overall logic and flow of the solution.
-4. Form an initial judgment.
-5. Double - check to ensure no important details are overlooked.
 
-STRICT OUTPUT INSTRUCTIONS:
-Output exactly two blocks in this order and nothing else: <thought>...</thought> then <result>...</result>.
-In the <thought> tag, give a concise assessment (2-6 sentences, plain text) that references the three redundancy criteria (Criterion 1-3) and briefly cites concrete evidence from the solution.
-In the <result> tag, output a single digit only: "0" if the solution is redundant, "1" if it is non-redundant.
-No extra text before, between, or after the two tags.
+BACKGROUND
+You will receive a raw solution text to a difficult math problem. The author attempted to separate steps with blank lines("\n\n"). We call a step “redundant” if it restates prior content without adding substance, or otherwise does not materially help solve the problem.
 
-<thought>
-[Analyze the solution here]
-</thought>
-<result>
-[Give the "0" (Redundant) or "1" (Non - redundant) judgment here]
-</result>
+
+STEP BOUNDARIES
+- Treat steps as contiguous blocks separated by exactly two newline characters ("\n\n").
+- If multiple blank lines appear, treat them as a single boundary.
+- Ignore empty blocks created by extra blank lines.
+
+
+INPUT
+- One raw solution text (full answer or a fragment) with steps separated as above.
+
+
+DECISION TARGET (BINARY)
+- Output 0 if there exists at least one redundant step.
+- Output 1 if there are no redundant steps.
+
+
+DEFINITION OF A REDUNDANT STEP
+A step is redundant if it is ANY of the following:
+1) Pure restatement: It repeats the problem or a previous step without adding new insight, information, or direction for what to do next.
+2) Empty encouragement or meta-comment: e.g., “Good job!”, “This is hard/easy”, complaints or filler that do not move the solution forward.
+3) Trivial or stalling progress: It adds only the tiniest amount of information that does not materially guide the solution (no real plan-setting, no decisive progress).
+4) Repetition of facts/results already established, with no refinement, correction, or new use.
+5) Irrelevant digression that does not contribute to solving the problem.
+6) Duplicate verification of an already confirmed result: After a result/computation has been verified correct, performing additional checks of the same item—by the same or a different method—that do not introduce new information, correct an earlier mistake, or unlock a new step is redundant.
+
+
+NON-REDUNDANT STEP (counterexamples)
+A step is NOT redundant if it:
+- Introduces a new approach, subgoal, or plan that guides subsequent work.
+- Performs a computation or inference that is used later.
+- Defines notation or conditions that are referenced later.
+- Eliminates a candidate path based on valid reasoning (thus narrowing the search).
+- Corrects a prior error in a way that materially affects the final solution.
+- Performs a single verification of a critical result/computation/idea (at most once) that is then relied upon downstream.
+
+Note: More than one verification of the same result/computation/idea is considered redundant unless the later check reveals a real error or changes the subsequent reasoning in a material way.
+
+
+SCOPE
+- Judge redundancy only; do NOT evaluate mathematical correctness of the entire solution.
+- Minor paraphrases that provide no new content are redundant.
+- If a step mixes small new content with large repetition, decide based on whether the NEW content materially advances the solution.
+
+
+PROCESS
+1) Split the input into steps using the boundary rules.
+2) For each step, assess redundancy using the definitions above.
+3) If ANY step is redundant → final label = 0. Otherwise → final label = 1.
+
+
+OUTPUT FORMAT (STRICT, TWO-PART)
+Produce your output in exactly two sections:
+
+
+A) ANALYSIS
+- Report the total number of steps.
+- List each step in order as:
+  Step i — [Redundant | Not Redundant] — one-sentence justification.
+  (Optionally include a short snippet of ≤12 words from the step for identification; do not quote long text.)
+- Include a line: Redundant step indices: [ ... ] (empty list if none).
+
+
+B) FINAL
+- On the VERY LAST LINE of your entire output, print ONLY a single digit: 0 or 1.
+- Do not include anything after that digit. No extra spaces, punctuation, or text.
+
+
+EXAMPLES OF FINAL LINE
+0
+(or)
+1
+
+
+BEGIN RAW SOLUTION
+{response}
+END RAW SOLUTION
+
+
+Now produce the output.
 """
 
-PROCESS_CRITIQUE1_TEMPLATE = """\
-BACKGROUND
+PROCESS_CRITIQUE_TEMPLATE = """BACKGROUND
 Your task is to assess whether a given reasoning step in a solution to a math problem is logically and mathematically correct.
 
 A reasoning step is correct if:
@@ -106,37 +161,6 @@ Reasoning Step {current_step} of {total_steps}:
 {reasoning_step}
 
 END INPUT
-"""
-
-PROCESS_CRITIQUE2_TEMPLATE = """\
-Your task is to determine whether a given mathematical solution process (partial or complete) can lead to the final correct answer. The key is that if a value is obtained in the previous steps, whether it is correct or not, you should not modify it and continue the solution based on that value to see if the correct answer can still be reached.
-
-First, please carefully read the following mathematical problem:
-<math_problem>
-{MATH_PROBLEM}
-</math_problem>
-Next, here is the final correct answer to the problem:
-<correct_answer>
-{CORRECT_ANSWER}
-</correct_answer>
-Now, please examine the following mathematical solution process:
-<solution_process>
-{SOLUTION_PROCESS}
-</solution_process>
-When evaluating the solution process, follow these steps:
-1. Carefully read the entire solution process.
-2. Without making any modifications to the values obtained at each step, continue the solution based on the current output. If the solution has already followed a certain train of thought, continue with this thought; if the solution is still in the early stage without a fixed problem - solving method, continue to attempt solutions on the basis of the analysis.
-3. Check if the final result of this continued solution matches the given correct answer.
-
-In the <thought> tag, analyze the solution process step - by - step, considering whether the continued solution based on the current output can lead to the correct answer and provide a detailed explanation of your judgment. Then, in the <result> tag, give your final determination. The <result> tag should only contain a single digit, "1" if the process can lead to the correct answer and "0" if it cannot.
-
-<thought>
-[Analyze the solution process here and provide a detailed explanation of your judgment]
-</thought>
-<result>
-[0 or 1]
-</result>
-Please ensure that your judgment is based on a strict analysis of the solution process without making any modifications to the intermediate results.
 """
 
 REFLECTION_TEMPLATE = """Transform the critique into a concise “reflection” suitable for immediate insertion after the incorrect step in a math solution, guiding self-correction.
@@ -906,8 +930,8 @@ class UniversalAIClient:
 
 
 def generate_proccess_reward_data(solution_str: str,
-                                  split_step_num: int,
-                                  template: str = PROCESS_SCORE_TEMPLATE) -> List[List[Dict[str, str]]]:
+                                 split_step_num: int,
+                                 template: str = PROCESS_SCORE_TEMPLATE) -> List[List[Dict[str, str]]]:
     """
     根据输入 solution_str 生成用于“过程评分”的 batch 数据：
     - 若包含 '</think>'，仅取其之前作为 CoT，并移除 '<think>' / '</think>' 标签；
@@ -945,10 +969,10 @@ def generate_proccess_reward_data(solution_str: str,
     batch: List[List[Dict[str, str]]] = []
     for i in range(0, len(steps), split_step_num):
         # 组段并恢复为以两个换行符连接
-        segment = "\n\n".join(steps[:i + split_step_num])
+        segment = "\n\n".join(steps[i:i + split_step_num])
 
         # 格式化模板：优先尝试带 reference；若模板无该占位符则回退
-        content = template.format(SOLUTION=str(segment))
+        content = template.format(response=str(segment))
 
         batch.append([{"role": "user", "content": content}])
 
@@ -1056,7 +1080,7 @@ def llm_process_scores_for_batch_items_with_universal_client(
 
 
     # 解析每段输出为 0/1
-    judge_scores = parse_between_result(judge_outputs)
+    judge_scores = parse_last_line_binary(judge_outputs)
 
     # 回填到每个样本
     per_item_raw: Dict[int, List[str]] = defaultdict(list)
@@ -1075,8 +1099,7 @@ def generate_proccess_critique_data(prompt_str: str,
                                     response_str: str,
                                     ground_truth: str,
                                     split_step_num: int,
-                                    template: str = PROCESS_CRITIQUE1_TEMPLATE,
-                                    mode: int = 1) -> List[List[Dict[str, str]]]:
+                                    template: str = PROCESS_CRITIQUE_TEMPLATE) -> List[List[Dict[str, str]]]:
     """
     根据输入 response_str 生成用于“过程评分”的 batch 数据：
     - 若包含 '</think>'，仅取其之前作为 CoT，并移除 '<think>' / '</think>' 标签；
@@ -1113,20 +1136,11 @@ def generate_proccess_critique_data(prompt_str: str,
 
     batch: List[List[Dict[str, str]]] = []
     for i in range(0, len(steps), split_step_num):
-        if mode == 1:
-            # 组段并恢复为以两个换行符连接
-            segment = "\n\n".join(steps[i:i + split_step_num])
+        # 组段并恢复为以两个换行符连接
+        segment = "\n\n".join(steps[i:i + split_step_num])
 
-            # 格式化模板：优先尝试带 reference；若模板无该占位符则回退
-            content = template.format(problem=str(prompt_str),reasoning_step=str(segment),final_answer=str(ground_truth),current_step=str(i+1),total_steps=str(len(steps)))
-        elif mode == 2:
-            # 组段并恢复为以两个换行符连接
-            segment = "\n\n".join(steps[:i + split_step_num])
-
-            # 格式化模板：优先尝试带 reference；若模板无该占位符则回退
-            content = template.format(MATH_PROBLEM=str(prompt_str),CORRECT_ANSWER=str(ground_truth),SOLUTION_PROCESS=str(segment))
-        else:
-            raise NotImplementedError
+        # 格式化模板：优先尝试带 reference；若模板无该占位符则回退
+        content = template.format(problem=str(prompt_str),reasoning_step=str(segment),final_answer=str(ground_truth),current_step=str(i+1),total_steps=str(len(steps)))
 
         batch.append([{"role": "user", "content": content}])
 
@@ -1170,7 +1184,7 @@ def parse_last_line_int_bounded(strings: List[str]) -> List[int]:
 
         # 尝试解析为整数
         try:
-            val = last_nonempty.strip().split(" ")[-1].strip()
+            val = last_nonempty.strip()
         except ValueError:
             result.append(0)
             continue
@@ -1179,40 +1193,6 @@ def parse_last_line_int_bounded(strings: List[str]) -> List[int]:
         if val == "#### 0":
             result.append(0)
         elif val == "#### 1":
-            result.append(1)
-        else:
-            # result.append(val if val <= split_num else -1)
-            result.append(0)
-
-    return result
-
-
-def parse_between_result(strings: List[str]) -> List[int]:
-    result: List[int] = []
-    for s in strings:
-        if not isinstance(s, str):
-            result.append(0)
-            continue
-
-        # 标准化换行并切分
-        text = s.replace("\r\n", "\n").replace("\r", "\n")
-        lines = text.split("\n")
-
-        # 取最后一个<result>...</result>
-        matches = re.findall(r'<result>(.*?)</result>', text, re.DOTALL)
-        last_nonempty = matches[-1].strip() if matches else ""
-
-        # 尝试解析为整数
-        try:
-            val = last_nonempty.strip().split(" ")[-1].strip()
-        except ValueError:
-            result.append(0)
-            continue
-
-        # 按规则输出
-        if val == "0":
-            result.append(0)
-        elif val == "1":
             result.append(1)
         else:
             # result.append(val if val <= split_num else -1)
@@ -1244,7 +1224,6 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
     request_extra: Optional[Dict[str, Any]] = None,
     # 可选：分隔规则（若与你的切步规则一致，建议保持默认）
     step_separator: str = "\n\n",
-    mode: int = 1,
 ) -> None:
     """
     以“块”为单位向 judge 模型请求，但将 judge 结果“还原”为原始 step 级别的 0/1 列表：
@@ -1279,12 +1258,7 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
         ground_truth = item.get("ground_truth")
 
         # 1) 生成用于 judge 的段消息（与现有函数一致）
-        if mode == 1:
-            seg_msgs: List[List[Dict[str, str]]] = generate_proccess_critique_data(raw_question, response_str, ground_truth, split_step_num, PROCESS_CRITIQUE1_TEMPLATE, 1)
-        elif mode == 2:
-            seg_msgs: List[List[Dict[str, str]]] = generate_proccess_critique_data(raw_question, response_str, ground_truth, split_step_num, PROCESS_CRITIQUE2_TEMPLATE, 2)
-        else:
-            raise NotImplementedError
+        seg_msgs: List[List[Dict[str, str]]] = generate_proccess_critique_data(raw_question, response_str, ground_truth, split_step_num)
         per_item_seg_msgs[i] = seg_msgs
 
         # 2) 估算原始 step 总数（按分隔符）
@@ -1311,9 +1285,9 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
     # 若没有任何段，直接回填空并返回
     if not flat_messages:
         for item in batch_items:
-            item[f"process_critique_raw{mode}"] = []
-            item[f"process_critique_parsed{mode}"] = []
-            item[f"process_step_critique{mode}"] = []
+            item["process_critique_raw"] = []
+            item["process_critique_parsed"] = []
+            item["process_step_critique"] = []
         return
 
     # 批量请求
@@ -1351,12 +1325,7 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
         parsed_i: List[int] = []
         for raw, seg_len in zip(raws_i, seg_lens):
             # 逐段解析，限制 num=seg_len
-            if mode == 1:
-                v = parse_last_line_int_bounded([raw])[0]
-            elif mode == 2:
-                v = parse_between_result([raw])[0]
-            else:
-                raise NotImplementedError
+            v = parse_last_line_int_bounded([raw])[0]
             parsed_i.append(v)
         per_item_parsed[i] = parsed_i
      
@@ -1367,11 +1336,11 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
         raws = per_item_raw.get(i, [])
 
         # 回填原始与解析结果（按段）
-        item[f"process_critique_raw{mode}"] = raws
-        item[f"process_critique_parsed{mode}"] = parsed
+        item["process_critique_raw"] = raws
+        item["process_critique_parsed"] = parsed
 
         if not seg_lens:
-            item[f"process_step_critique{mode}"] = []
+            item["process_step_critique"] = []
             continue
 
         step_scores: List[int] = []
@@ -1406,15 +1375,13 @@ def llm_process_critique_steppos_for_batch_items_with_universal_client(
                 step_scores.extend([0] * seg_len)
                 # failed = True
 
-        item[f"process_step_critique{mode}"] = step_scores
+        item["process_step_critique"] = step_scores
 
     return timing_raw
 
 def get_reflection(client,
-                   process_step_critique1,
-                   process_critique_raw1,
-                   process_step_critique2,
-                   process_critique_raw2,
+                   process_step_critique,
+                   process_critique_raw,
                    temperature,
                    max_tokens,
                    concurrency,
@@ -1433,7 +1400,7 @@ def get_reflection(client,
     request_extra = request_extra or {}
     # 1) 找到第一个 0 的位置
     try:
-        idx = next(i for i, (v1, v2) in enumerate(zip(process_step_critique1, process_step_critique2)) if v1 == 0 or v2 == 0)
+        idx = next(i for i, v in enumerate(process_step_critique) if v == 0)
     except StopIteration:
         raise AssertionError("process_step_critique must contain at least one 0")
 
@@ -1507,8 +1474,7 @@ class ProcessDAPORewardManager:
         max_resp_len=None,
         overlong_buffer_cfg=None,
         llm_reward_cfg=None,
-        llm_critique1_cfg=None,
-        llm_critique2_cfg=None,
+        llm_critique_cfg=None,
         reflection_cfg=None,
         prm_cfg=None,
         repetition_penalty_cfg=None,
@@ -1520,8 +1486,7 @@ class ProcessDAPORewardManager:
         self.overlong_buffer_cfg = overlong_buffer_cfg
         self.max_resp_len = max_resp_len
         self.llm_reward_cfg = llm_reward_cfg
-        self.llm_critique1_cfg = llm_critique1_cfg
-        self.llm_critique2_cfg = llm_critique2_cfg
+        self.llm_critique_cfg = llm_critique_cfg
         self.reflection_cfg = reflection_cfg
         self.prm_cfg = prm_cfg
         self.repetition_penalty_cfg = repetition_penalty_cfg
@@ -1629,36 +1594,17 @@ class ProcessDAPORewardManager:
                     reward_extra_info['timing_raw'][k] = 0
                 reward_extra_info['timing_raw'][k] += v
         
-        if self.llm_critique1_cfg.enable == True:
-            extra_body={"chat_template_kwargs": {"enable_thinking": self.llm_critique1_cfg.enable_think}, "presence_penalty": self.llm_critique1_cfg.presence_penalty}
+        if self.llm_critique_cfg.enable == True:
+            extra_body={"chat_template_kwargs": {"enable_thinking": self.llm_critique_cfg.enable_think}, "presence_penalty": self.llm_critique_cfg.presence_penalty}
             request_extra = {"extra_body": extra_body}
             timing_raw = llm_process_critique_steppos_for_batch_items_with_universal_client(
                 batch_items,
                 client=client,  # 你在 __call__ 开头 _ensure_client() 拿到的 UniversalAIClient 实例
-                split_step_num=self.llm_critique1_cfg.split_step_num,
-                temperature=self.llm_critique1_cfg.temperature,
-                max_tokens=self.llm_critique1_cfg.max_tokens,
-                concurrency=self.llm_critique1_cfg.concurrency,
+                split_step_num=self.llm_critique_cfg.split_step_num,
+                temperature=self.llm_critique_cfg.temperature,
+                max_tokens=self.llm_critique_cfg.max_tokens,
+                concurrency=self.llm_critique_cfg.concurrency,
                 request_extra=request_extra,
-                mode=1,
-            )
-            for k, v in timing_raw.items():
-                if k not in reward_extra_info['timing_raw']:
-                    reward_extra_info['timing_raw'][k] = 0
-                reward_extra_info['timing_raw'][k] += v
-        
-        if self.llm_critique2_cfg.enable == True:
-            extra_body={"chat_template_kwargs": {"enable_thinking": self.llm_critique2_cfg.enable_think}, "presence_penalty": self.llm_critique2_cfg.presence_penalty}
-            request_extra = {"extra_body": extra_body}
-            timing_raw = llm_process_critique_steppos_for_batch_items_with_universal_client(
-                batch_items,
-                client=client,  # 你在 __call__ 开头 _ensure_client() 拿到的 UniversalAIClient 实例
-                split_step_num=self.llm_critique2_cfg.split_step_num,
-                temperature=self.llm_critique2_cfg.temperature,
-                max_tokens=self.llm_critique2_cfg.max_tokens,
-                concurrency=self.llm_critique2_cfg.concurrency,
-                request_extra=request_extra,
-                mode=2,
             )
             for k, v in timing_raw.items():
                 if k not in reward_extra_info['timing_raw']:
@@ -1687,7 +1633,8 @@ class ProcessDAPORewardManager:
             # }
             # extras_to_merge = {k: v for k, v in extras_to_merge.items() if v is not None}
             # enhanced_extra = {**base_extra, **extras_to_merge}
-            enhanced_extra = {**base_extra, "process_scores": item.get("process_scores", []), "process_critique1": item.get("process_step_critique1", []), "process_critique2": item.get("process_step_critique2", [])}
+            enhanced_extra = {**base_extra, "process_scores": item.get("process_scores", [])}
+            enhanced_extra = {**base_extra, "process_critique": item.get("process_step_critique", [])}
 
             
             result = self.compute_score(
@@ -1697,8 +1644,7 @@ class ProcessDAPORewardManager:
                 extra_info=enhanced_extra,
                 llm_reward_cfg=self.llm_reward_cfg,
                 prm_cfg=self.prm_cfg,
-                llm_critique1_cfg=self.llm_critique1_cfg,
-                llm_critique2_cfg=self.llm_critique2_cfg,
+                llm_critique_cfg=self.llm_critique_cfg,
                 repetition_penalty_cfg=self.repetition_penalty_cfg,
             )
 
@@ -1713,17 +1659,11 @@ class ProcessDAPORewardManager:
                 # reward_extra_info["outcome_score"].append(score)
                 # reward_extra_info['process_scores'].append(enhanced_extra['process_scores'])
             
-            if self.llm_critique1_cfg.enable:
-                assert item.get("process_critique_raw1", []) is not None, (f"process_critique_raw1 must be provided, but got None")
-                reward_extra_info['process_critique_raw1'].append(item.get("process_critique_raw1", []))
-                reward_extra_info['process_critique_parsed1'].append(item.get("process_critique_parsed1", []))
-                reward_extra_info['process_step_critique1'].append(item.get("process_step_critique1", []))
-            
-            if self.llm_critique2_cfg.enable:
-                assert item.get("process_critique_raw2", []) is not None, (f"process_critique_raw2 must be provided, but got None")
-                reward_extra_info['process_critique_raw2'].append(item.get("process_critique_raw2", []))
-                reward_extra_info['process_critique_parsed2'].append(item.get("process_critique_parsed2", []))
-                reward_extra_info['process_step_critique2'].append(item.get("process_step_critique2", []))
+            if self.llm_critique_cfg.enable:
+                assert item.get("process_critique_raw", []) is not None, (f"process_critique_raw must be provided, but got None")
+                reward_extra_info['process_critique_raw'].append(item.get("process_critique_raw", []))
+                reward_extra_info['process_critique_parsed'].append(item.get("process_critique_parsed", []))
+                reward_extra_info['process_step_critique'].append(item.get("process_step_critique", []))
 
             if self.llm_reward_cfg.enable:
                 assert item.get("process_scores", []) is not None, (f"llm_process_scores must be provided, but got None")
@@ -1731,17 +1671,15 @@ class ProcessDAPORewardManager:
                 reward_extra_info['process_scores'].append(item.get("process_scores", []))
 
             if self.reflection_cfg.enable:
-                assert self.llm_critique1_cfg.enable and self.llm_critique2_cfg.enable, "reflection 必须在 critique 的基础上才可以实现"
+                assert self.llm_critique_cfg.enable, "reflection 必须在 critique 的基础上才可以实现"
                 if reward_extra_info["outcome_score"][i] == 0.0:
-                    if (self.llm_critique1_cfg.enable and self.llm_critique2_cfg.enable) and (0.0 in item.get("process_step_critique1", []) or 0.0 in item.get("process_step_critique2", [])):
+                    if self.llm_critique_cfg.enable and 0.0 in item.get("process_step_critique", []):
                         reward_extra_info["next_step"].append(1)
                         extra_body={"chat_template_kwargs": {"enable_thinking": self.reflection_cfg.enable_think},  "presence_penalty": self.reflection_cfg.presence_penalty}
                         request_extra = {"extra_body": extra_body}
                         reflection, timing_raw = get_reflection(client,
-                                                                item.get("process_step_critique1", []),
-                                                                item.get("process_critique_raw1", []),
-                                                                item.get("process_step_critique2", []),
-                                                                item.get("process_critique_raw2", []),
+                                                                item.get("process_step_critique", []),
+                                                                item.get("process_critique_raw", []),
                                                                 self.reflection_cfg.temperature,
                                                                 self.reflection_cfg.max_tokens,
                                                                 self.reflection_cfg.concurrency,

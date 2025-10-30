@@ -206,11 +206,15 @@ def compute_data_metrics_process_dapo(batch: DataProto, use_critic: bool = True)
     sequence_score = batch.batch["token_level_scores"].sum(-1)
     sequence_reward = batch.batch["token_level_rewards"].sum(-1)
     sequence_outcome_score = batch.non_tensor_batch["outcome_score"]
-    sequence_process_score = batch.non_tensor_batch["process_score"]
+    sequence_process_score_1 = batch.non_tensor_batch["process_score1"]
+    sequence_process_score_2 = batch.non_tensor_batch["process_score2"]
+    sequence_repetition_penalty = batch.non_tensor_batch["repetition_penalty"]
 
 
     sequence_outcome_score_arr = np.asarray(sequence_outcome_score).ravel()  # 统一为1D，兼容list/ndarray
-    sequence_process_score_arr = np.asarray(sequence_process_score).ravel()  # 统一为1D，兼容list/ndarray
+    sequence_process_score_1_arr = np.asarray(sequence_process_score_1).ravel()  # 统一为1D，兼容list/ndarray
+    sequence_process_score_2_arr = np.asarray(sequence_process_score_2).ravel()  # 统一为1D，兼容list/ndarray
+    sequence_repetition_penalty_arr = np.asarray(sequence_repetition_penalty).ravel()  # 统一为1D，兼容list/ndarray
 
     advantages = batch.batch["advantages"]
     returns = batch.batch["returns"]
@@ -244,10 +248,18 @@ def compute_data_metrics_process_dapo(batch: DataProto, use_critic: bool = True)
         "critic/score/mean": round(float(sequence_outcome_score_arr.mean()), 4) if sequence_outcome_score_arr.size else float("nan"),
         "critic/score/max":  round(float(sequence_outcome_score_arr.max()),  4) if sequence_outcome_score_arr.size else float("nan"),
         "critic/score/min":  round(float(sequence_outcome_score_arr.min()),  4) if sequence_outcome_score_arr.size else float("nan"),
-        # process_score
-        "critic/process_score/mean": round(float(sequence_process_score_arr.mean()), 4) if sequence_process_score_arr.size else float("nan"),
-        "critic/process_score/max":  round(float(sequence_process_score_arr.max()),  4) if sequence_process_score_arr.size else float("nan"),
-        "critic/process_score/min":  round(float(sequence_process_score_arr.min()),  4) if sequence_process_score_arr.size else float("nan"),
+        # process_score_1
+        "critic/process_score_1/mean": round(float(sequence_process_score_1_arr.mean()), 4) if sequence_process_score_1_arr.size else float("nan"),
+        "critic/process_score_1/max":  round(float(sequence_process_score_1_arr.max()),  4) if sequence_process_score_1_arr.size else float("nan"),
+        "critic/process_score_1/min":  round(float(sequence_process_score_1_arr.min()),  4) if sequence_process_score_1_arr.size else float("nan"),
+        # process_score_2
+        "critic/process_score_2/mean": round(float(sequence_process_score_2_arr.mean()), 4) if sequence_process_score_2_arr.size else float("nan"),
+        "critic/process_score_2/max":  round(float(sequence_process_score_2_arr.max()),  4) if sequence_process_score_2_arr.size else float("nan"),
+        "critic/process_score_2/min":  round(float(sequence_process_score_2_arr.min()),  4) if sequence_process_score_2_arr.size else float("nan"),
+        # sequence_repetition_penalty
+        "critic/repetition_penalty/mean": round(float(sequence_repetition_penalty_arr.mean()), 4) if sequence_repetition_penalty_arr.size else float("nan"),
+        "critic/repetition_penalty/max":  round(float(sequence_repetition_penalty_arr.max()),  4) if sequence_repetition_penalty_arr.size else float("nan"),
+        "critic/repetition_penalty/min":  round(float(sequence_repetition_penalty_arr.min()),  4) if sequence_repetition_penalty_arr.size else float("nan"),        
         # reward
         # "critic/rewards/mean": torch.mean(sequence_reward).detach().item(),
         # "critic/rewards/max": torch.max(sequence_reward).detach().item(),

@@ -282,7 +282,7 @@ def compute_advantage(
         # Initialize the mask for GRPO calculation
         grpo_calculation_mask = data.batch["response_mask"]
         response_step_ids = data.batch['response_step_ids']
-        process_step_critique = data.non_tensor_batch.get('process_step_critique', None)
+        process_step_critique = data.non_tensor_batch.get('process_step_critique1', None)
         prior_response_mask = data.batch.get("prior_response_mask", None)
         # Call compute_grpo_outcome_advantage with parameters matching its definition
         advantages, returns = core_algos.compute_process_grpo_advantage(

@@ -70,18 +70,14 @@ class TaskRunner:
 
         # 如需修改且开启了 struct，可这样改：
         # with OmegaConf.open_dict(config_eval):
-        # config_eval.reward_model.reward_manager="process_dapo"
-        # config_eval.custom_reward_function.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/utils/reward_score/dapo_score_with_process_metrics.py"
         config_eval.reward_model.reward_manager="naive"
         config_eval.custom_reward_function.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/skyworkmath.py"
-        config_eval.custom_reward_function.llm_process_critique1.enable=True
-        config_eval.custom_reward_function.llm_process_critique1.enable_process_score_when_wrong=False
-        config_eval.custom_reward_function.llm_process_critique2.enable=True
-        config_eval.custom_reward_function.llm_process_critique2.enable_process_score_when_wrong=False
+        config_eval.custom_reward_function.llm_process_critique.enable=False
+        config_eval.custom_reward_function.llm_process_critique.enable_process_score_when_wrong=False
         config_eval.custom_reward_function.process_reward_model.enable=False
         config_eval.custom_reward_function.reflection.enable=False
         config_eval.custom_reward_function.llm_process_reward.enable=False
-        config_eval.custom_reward_function.repetition_penalty_cfg.enable=True
+        config_eval.custom_reward_function.repetition_penalty_cfg.enable=False
         
         print(f"TaskRunner hostname: {socket.gethostname()}, PID: {os.getpid()}")
 
@@ -159,8 +155,7 @@ class TaskRunner:
             max_resp_len=config.data.max_response_length,
             overlong_buffer_cfg=config.reward_model.overlong_buffer,
             llm_reward_cfg=config.custom_reward_function.llm_process_reward,
-            llm_critique1_cfg=config.custom_reward_function.llm_process_critique1,
-            llm_critique2_cfg=config.custom_reward_function.llm_process_critique2,
+            llm_critique_cfg=config.custom_reward_function.llm_process_critique,
             reflection_cfg=config.custom_reward_function.reflection,
             prm_cfg=config.custom_reward_function.process_reward_model,
             repetition_penalty_cfg=config.custom_reward_function.repetition_penalty_cfg,

@@ -15,8 +15,6 @@
 
 import numpy as np
 
-import re
-
 
 def compute_score(data_source,
                   solution_str,
@@ -24,9 +22,7 @@ def compute_score(data_source,
                   extra_info,
                   llm_reward_cfg,
                   prm_cfg,
-                  llm_critique1_cfg,
-                  llm_critique2_cfg,
-                  repetition_penalty_cfg) -> float:
+                  llm_critique_cfg) -> float:
     outcome_score = 0.0
     try:
         string_in_last_boxed = last_boxed_only_string(solution_str)
@@ -38,13 +34,8 @@ def compute_score(data_source,
         print(e)
     
     llm_judge_process_score_list = []
-    llm_critique1_score_list = []
-    llm_critique2_score_list = []
-    repetition_penalty_list = []
+    llm_critique_score_list = []
     overall_score = outcome_score
-    repetition_penalty = 0
-    llm_critique1_score = 0
-    llm_critique2_score = 0
 
     if llm_reward_cfg.enable:
         assert extra_info['process_scores'] is not None, (f"llm_process_scores must be provided, but got None")
@@ -54,46 +45,15 @@ def compute_score(data_source,
     # if prm_cfg.enable == True:
     #     prm_score_list = get_prm_score(solution_str, ground_truth, llm_judge_cfg.temperature, llm_judge_cfg.max_tokens, llm_judge_cfg.concurrency)
     #     prm_score = float(np.mean(prm_score_list))
-    if llm_critique1_cfg.enable:
-        assert extra_info['process_critique1'] is not None, (f"process_critique1 must be provided, but got None")
-        llm_critique1_score_list = extra_info['process_critique1']
-        llm_critique1_score = float(np.mean(llm_critique1_score_list))
-        weighted_llm_critique1_score = llm_critique1_score
-        if not llm_critique1_cfg.enable_process_score_when_wrong:
-            weighted_llm_critique1_score = outcome_score * weighted_llm_critique1_score
-        overall_score = overall_score + llm_critique1_cfg.coefficient * weighted_llm_critique1_score
-    if llm_critique2_cfg.enable:
-        assert extra_info['process_critique2'] is not None, (f"process_critique2 must be provided, but got None")
-        llm_critique2_score_list = extra_info['process_critique2']
-        llm_critique2_score = float(np.mean(llm_critique2_score_list))
-        weighted_llm_critique2_score = llm_critique2_score
-        if not llm_critique2_cfg.enable_process_score_when_wrong:
-            weighted_llm_critique2_score = outcome_score * weighted_llm_critique2_score
-        overall_score = overall_score + llm_critique2_cfg.coefficient * weighted_llm_critique2_score
-    if repetition_penalty_cfg.enable:
-        steps = dict()
-        for step in solution_str.split("\n\n"):
-            if step not in steps:
-                steps[step] = 0
-            steps[step] += 1
-        for step in solution_str.split("\n\n"):
-            repetition = 0.0
-            for match in re.finditer(r"(\w+(?:\s\w+)*?)(\s\1)+", re.sub(r"\W+", " ", step), re.I):
-                if match.group(0).count(match.group(1)) >= repetition_penalty_cfg.intra_threshold:
-                    repetition = -1.0
-            if steps[step] >= repetition_penalty_cfg.inter_threshold:
-                repetition = -1.0
-            repetition_penalty_list.append(repetition)
-        repetition_penalty = float(np.mean(repetition_penalty_list))
-        weighted_repetition_penalty = repetition_penalty
-        overall_score = overall_score + repetition_penalty_cfg.coefficient * weighted_repetition_penalty
+    if llm_critique_cfg.enable:
+        assert extra_info['process_critique'] is not None, (f"process_critique must be provided, but got None")
+        llm_critique_score_list = extra_info['process_critique']
+        llm_critique_score = float(np.mean(llm_critique_score_list))
+        overall_score = overall_score + llm_critique_cfg.coefficient * llm_critique_score
     return {
         "overall_score": overall_score,
         "outcome_score": outcome_score,
-        "repetition_penalty_list": repetition_penalty_list,
-        "process_score1": llm_critique1_score,
-        "process_score2": llm_critique2_score,
-        "repetition_penalty": repetition_penalty,
+        "process_score": overall_score - outcome_score,
     }
 
 

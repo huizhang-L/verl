@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-export PARTITION=ailab-llmfudan
-export CFSCTL=/mnt/shared-storage-user/lvhuijie/cfs/bin/cfsctl
-export CFG=/mnt/shared-storage-user/lvhuijie/cfs/cfsd.cfg
+source /root/miniconda3/etc/profile.d/conda.sh
+
+conda activate /mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/envs/verl
+
+cd /mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl
+
+cp -r /mnt/shared-storage-user/liaochenyang/cfs /root
+
+export PARTITION=${GROUP}
+export CFSCTL=/root/cfs/bin/cfsctl
+export CFG=/root/cfs/cfsd.cfg
 
 # source /root/.bashrc
 # cd /mnt/shared-storage-user/lvhuijie/my_git_repo/verl
 
 handle_sigterm() {
     echo "Received SIGTERM signal. Cleaning up..."
-    $CFSCTL -p $PARTITION -n $NODE_COUNT-X $MASTER_ADDR -s $CFG stop
+    $CFSCTL -p $PARTITION -n $NODE_COUNT -X $MASTER_ADDR -s $CFG stop
     exit 0
 }
 # 为sigterm信号安装处理函数
@@ -19,24 +27,28 @@ $CFSCTL -p $PARTITION -n $NODE_COUNT -X $MASTER_ADDR -s $CFG start
 [ $? -ne 0 ] && exit 1
 
 
-export LLM_AS_A_JUDGE_SERVICE_URL="http://10.102.246.84:54321/v1,http://10.102.246.84:54322/v1,http://10.102.246.35:54323/v1,http://10.102.246.35:54324/v1,http://10.102.246.35:54325/v1,http://10.102.246.35:54326/v1,http://10.102.246.35:54327/v1,http://10.102.211.12:54328/v1,http://10.102.211.12:54329/v1,http://10.102.211.12:54330/v1,http://10.102.211.12:54331/v1,http://10.102.211.12:54332/v1,http://10.102.211.12:54333/v1,http://10.102.211.12:54334/v1,http://10.102.211.12:54335/v1,http://10.102.246.24:54336/v1,http://10.102.246.24:54337/v1,http://10.102.246.24:54338/v1,http://10.102.246.24:54339/v1,http://10.102.246.24:54340/v1,http://10.102.246.24:54341/v1,http://10.102.246.84:54342/v1,http://10.102.246.84:54343/v1,http://10.102.246.84:54344/v1,http://10.102.246.84:54345/v1"
-export LLM_AS_A_JUDGE_SERVICE_API_KEY="api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key,api_key"
-export LLM_AS_A_JUDGE_SERVICE_MODEL="Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507,Qwen3-30B-A3B-Thinking-2507"
-export LLM_AS_A_JUDGE_USE_PROXY="False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False,False"
+export LLM_AS_A_JUDGE_SERVICE_URL="http://10.102.246.25:23456/v1"
+export LLM_AS_A_JUDGE_SERVICE_API_KEY="api_key"
+export LLM_AS_A_JUDGE_SERVICE_MODEL="gpt-oss-120b-high"
+export LLM_AS_A_JUDGE_SERVICE_USE_PROXY="False"
+export LLM_AS_A_JUDGE_PROXY_URL="https://h.pjlab.org.cn/kapi/workspace.kubebrain.io/ailab-llmfudan/liaochenyang-dev.liaochenyang/54321/"
+export LLM_AS_A_JUDGE_PROXY_USERNAME="e9c9e77f9cbc2f0ae53ea58b8fa412f5"
+export LLM_AS_A_JUDGE_PROXY_PASSWORD="161218962860c2c3f931d477b7fc8e75"
 
 
 # Ray Cluster
 nnodes=1
-n_gpus_per_node=2
+# !!!! 注意卡数，现在显存扩大了
+n_gpus_per_node=1
 
 
 # Data
-max_prompt_length=$((1024*1))
+max_prompt_length=$((1024))
 max_response_length=$((1024 * 8))
 
 
 # Rollout
-n_resp_per_prompt=8
+n_resp_per_prompt=1
 temperature=0.6
 top_p=1.0
 top_k=-1 # 0 for HF rollout, -1 for vLLM rollout
@@ -44,7 +56,7 @@ val_top_p=0.7
 
 # Actor Update Batch
 # ppo_mini_batch_size=$((nnodes * n_gpus_per_node * 4))
-ppo_mini_batch_size=128
+ppo_mini_batch_size=1
 total_epochs=10
 
 
@@ -55,12 +67,12 @@ clip_ratio_high=0.28
 
 # DAPO Dynamic Sampling
 # train_prompt_bsz=$((32 * ppo_mini_batch_size / n_resp_per_prompt))
-train_prompt_bsz=16
-gen_prompt_bsz=16
+train_prompt_bsz=1
+gen_prompt_bsz=1
 # 每次 rollout batch 是 gen_prompt_bsz，直到凑够 train_prompt_bsz 的数据
 # 如果不够，就继续 rollout，最多 rollout max_num_gen_batches 个 batch
 enable_filter_groups=False
-filter_groups_metric=acc
+filter_groups_metric="seq_outcome_reward"
 max_num_gen_batches=100
 
 
@@ -80,8 +92,8 @@ enable_llm_process_reward=False
 enable_llm_process_critique=True
 enable_process_reward_model_score=False
 enable_think=True
-enable_process_score_when_wrong=True
-enable_repetition_penalty=False
+enable_repetition_penalty=True
+enable_process_score_when_wrong=False
 
 # Updata Actor
 actor_lr=1e-6
@@ -89,8 +101,8 @@ actor_lr_warmup_steps=0
 
 
 # GPU Memory Related Paremeter
-# 序列并行的值，必须能被 num_attention_heads 整除
-sp_size=2
+# !!!!序列并行的值，必须能被 num_attention_heads 整除，必须小于卡数!!!!
+sp_size=1
 use_dynamic_bsz=True
 actor_ppo_max_token_len_per_gpu=$((max_prompt_length + max_response_length))
 infer_ppo_max_token_len_per_gpu=$((max_prompt_length + max_response_length))
@@ -99,30 +111,30 @@ gen_tp=1
 use_remove_padding=True
 enable_activation_offload=False
 
-# WANDB
-project_name='verl_process_dapo_adv4_octothinker'
-# 为了适配任务提交脚本，名称必须以 verl- 开头
-exp_name='verl-dapo'
+# swanlab
+project_name='verl_process_dapo_adv6'
+# !!!! 实验名必须以 verl- 开头，不能有下划线
+exp_name='verl-skyworkmath-octothinker-complex-template-critique-noprocesswhenwrong-repepenalty-noreflection-nostepadv-nosteptopn'
 # Paths
-ckpts_dir="/nvme/lvhuijie/mnt/ailab-llmfudan/checkpoints_verl/process_adv_4/octothinker_3b_long_zero/dapo_math/DAPO/${exp_name}"
-prefix="/nvme/lvhuijie/mnt/ailab-llmfudan/checkpoints_verl/"
+ckpts_dir="/nvme/liaochenyang/mnt/checkpoints_verl/process_adv_6/octothinker_3b_short_zero_complex_template/skyworkmath/DAPO/${exp_name}"
+prefix="/nvme/liaochenyang/mnt/checkpoints_verl/"
 rel="${ckpts_dir#${prefix}}"        # 去掉前缀，得到相对路径
 export WANDB_DIR="./wandb/${rel}"
 mkdir -p "$WANDB_DIR" 
+# mkdir -p /nvme/liaochenyang/mnt/checkpoints_verl/process_adv_6/octothinker_3b_short_zero_complex_template/skyworkmath/DAPO/verl-skyworkmath-octothinker-complex-template-critique-noprocesswhenwrong-repepenalty-noreflection-nostepadv-nosteptopn/global_step_1/actor
 export WANDB_MODE="offline"
 timeline_json_file="${ckpts_dir}/time_line_file.json"
 reward_model_path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/models/Qwen2.5-Math/Qwen2.5-Math-PRM-7B"
 tarin_rollout_dir="${ckpts_dir}/train_rollout"
 val_data_dir="${ckpts_dir}/val_data"
 
-# ray job submit --no-wait --runtime-env="${RUNTIME_ENV}" \
-#     --working-dir "${WORKING_DIR}" \
-#     -- 
-python3 -m recipe.dapo.main_dapo \
-    data.train_files="/mnt/shared-storage-user/lvhuijie/my_git_repo/verl/data/dapo_math/dapo-math-17k-800token.parquet" \
-    data.val_files="/mnt/shared-storage-user/lvhuijie/my_git_repo/verl/data/math500/math500_verl_eval.parquet" \
+
+HYDRA_FULL_ERROR=1 python3 -m recipe.process_dapo.main_process_dapo \
+    hydra.searchpath="[file:///mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/verl/trainer/config]" \
+    data.train_files="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/shared_datas/verl_data/skyworkmath/skyworkmath_en.parquet" \
+    data.val_files="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/shared_datas/verl_data/skyworkmath/skyworkmath500_en.parquet" \
     data.prompt_key="prompt" \
-    data.truncation="middle" \
+    data.truncation="error" \
     data.max_prompt_length=${max_prompt_length} \
     data.max_response_length=${max_response_length} \
     data.gen_batch_size=${gen_prompt_bsz} \
@@ -131,16 +143,16 @@ python3 -m recipe.dapo.main_dapo \
     data.return_raw_chat=True \
     data.return_full_prompt=False \
     data.shuffle=True \
-    data.filter_overlong_prompts=False \
+    data.filter_overlong_prompts=True \
     data.trust_remote_code=True \
-    algorithm.adv_estimator="grpo" \
+    algorithm.adv_estimator="process_grpo" \
     algorithm.use_kl_in_reward=False \
     algorithm.kl_ctrl.kl_coef=0.0 \
     algorithm.filter_groups.enable=${enable_filter_groups} \
     algorithm.filter_groups.max_num_gen_batches=${max_num_gen_batches} \
     algorithm.filter_groups.metric=${filter_groups_metric} \
     actor_rollout_ref.hybrid_engine=True \
-    actor_rollout_ref.model.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/models/OctoThinker/3B/OctoThinker-3B-Long-Zero-template" \
+    actor_rollout_ref.model.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/models/OctoThinker/3B/OctoThinker-3B-Short-Zero-complex-template" \
     actor_rollout_ref.model.trust_remote_code=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.model.use_remove_padding=${use_remove_padding} \
@@ -185,6 +197,7 @@ python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.rollout.top_p=${top_p} \
     actor_rollout_ref.rollout.top_k=${top_k} \
     actor_rollout_ref.rollout.n=${n_resp_per_prompt} \
+    +actor_rollout_ref.rollout.repetition_penalty=1.2 \
     actor_rollout_ref.rollout.log_prob_use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.rollout.log_prob_max_token_len_per_gpu=${infer_ppo_max_token_len_per_gpu} \
     actor_rollout_ref.rollout.val_kwargs.temperature=${temperature} \
@@ -198,10 +211,12 @@ python3 -m recipe.dapo.main_dapo \
     actor_rollout_ref.ref.ulysses_sequence_parallel_size=${sp_size} \
     reward_model.enable=${enable_rm} \
     reward_model.reward_manager="process_dapo" \
+    reward_model.eval_reward_manager="process_dapo" \
     reward_model.overlong_buffer.enable=${enable_overlong_buffer} \
     reward_model.overlong_buffer.len=${overlong_buffer_len} \
     reward_model.overlong_buffer.penalty_factor=${overlong_penalty_factor} \
-    custom_reward_function.path="/mnt/shared-storage-user/lvhuijie/my_git_repo/verl/verl/utils/reward_score/dapo_score_with_process_metrics.py" \
+    custom_reward_function.path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/verl/utils/reward_score/hybrid_score.py" \
+    custom_reward_function.eval_path="/mnt/shared-storage-user/shared-storage-ailab-llmfudan/liaochenyang/verl/verl/utils/reward_score/hybrid_score.py" \
     custom_reward_function.name="compute_score" \
     custom_reward_function.llm_process_reward.enable=${enable_llm_process_reward} \
     custom_reward_function.llm_process_reward.temperature=0.1 \
@@ -215,28 +230,38 @@ python3 -m recipe.dapo.main_dapo \
     custom_reward_function.process_reward_model.max_tokens=512 \
     custom_reward_function.process_reward_model.concurrency=1 \
     custom_reward_function.process_reward_model.coefficient=0.5 \
-    custom_reward_function.llm_process_critique.enable=${enable_llm_process_critique} \
-    custom_reward_function.llm_process_critique.enable_process_score_when_wrong=${enable_process_score_when_wrong} \
-    custom_reward_function.llm_process_critique.temperature=0.1 \
-    custom_reward_function.llm_process_critique.max_tokens=8192 \
-    custom_reward_function.llm_process_critique.concurrency=256 \
-    custom_reward_function.llm_process_critique.coefficient=0.2 \
-    custom_reward_function.llm_process_critique.split_step_num=1 \
-    custom_reward_function.llm_process_critique.enable_think=${enable_think} \
+    custom_reward_function.llm_process_critique1.enable=${enable_llm_process_critique} \
+    custom_reward_function.llm_process_critique1.enable_process_score_when_wrong=${enable_process_score_when_wrong} \
+    custom_reward_function.llm_process_critique1.temperature=0.1 \
+    custom_reward_function.llm_process_critique1.max_tokens=8192 \
+    custom_reward_function.llm_process_critique1.concurrency=256 \
+    custom_reward_function.llm_process_critique1.coefficient=0.2 \
+    custom_reward_function.llm_process_critique1.split_step_num=1 \
+    custom_reward_function.llm_process_critique1.enable_think=${enable_think} \
+    custom_reward_function.llm_process_critique2.enable=${enable_llm_process_critique} \
+    custom_reward_function.llm_process_critique2.enable_process_score_when_wrong=${enable_process_score_when_wrong} \
+    custom_reward_function.llm_process_critique2.temperature=0.1 \
+    custom_reward_function.llm_process_critique2.max_tokens=8192 \
+    custom_reward_function.llm_process_critique2.concurrency=256 \
+    custom_reward_function.llm_process_critique2.coefficient=0.2 \
+    custom_reward_function.llm_process_critique2.split_step_num=1 \
+    custom_reward_function.llm_process_critique2.enable_think=${enable_think} \
     custom_reward_function.reflection.enable=${enable_filter_groups} \
     custom_reward_function.reflection.temperature=0.1 \
     custom_reward_function.reflection.max_tokens=8192 \
     custom_reward_function.reflection.concurrency=32 \
     custom_reward_function.repetition_penalty_cfg.enable=${enable_repetition_penalty} \
     custom_reward_function.repetition_penalty_cfg.coefficient=0.2 \
+    custom_reward_function.repetition_penalty_cfg.intra_threshold=10 \
+    custom_reward_function.repetition_penalty_cfg.inter_threshold=10 \
     trainer.logger='["console","wandb"]' \
     trainer.project_name=${project_name} \
     trainer.experiment_name=${exp_name} \
     trainer.n_gpus_per_node=${n_gpus_per_node} \
     trainer.nnodes=${nnodes} \
     trainer.val_before_train=False \
-    trainer.test_freq=2 \
-    trainer.save_freq=40 \
+    trainer.test_freq=-1 \
+    trainer.save_freq=1 \
     trainer.total_epochs=${total_epochs} \
     trainer.default_local_dir=${ckpts_dir} \
     trainer.resume_mode=auto \
@@ -245,4 +270,4 @@ python3 -m recipe.dapo.main_dapo \
     trainer.validation_data_dir=${val_data_dir} \
     ray_init.timeline_json_file=${timeline_json_file}
 
-$CFSCTL -p $PARTITION -n $NODE_COUNT-X $MASTER_ADDR -s $CFG stop   
+$CFSCTL -p $PARTITION -n $NODE_COUNT -X $MASTER_ADDR -s $CFG stop   
